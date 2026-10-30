@@ -91,7 +91,7 @@ function applyOutcome(payment, { status, resultCode, resultDesc, receipt, phone 
   payment.resultCode = String(resultCode);
   payment.resultDesc = resultDesc || mpesa.resultMessage(resultCode);
   if (status === 'success') {
-    payment.mpesaReceipt = receipt || `DEMO${shortCode(8)}`;
+    payment.mpesaReceipt = receipt || null;
     payment.completedAt = new Date().toISOString();
     if (phone) payment.payerPhone = phone;
   } else {
@@ -103,20 +103,6 @@ function applyOutcome(payment, { status, resultCode, resultDesc, receipt, phone 
   return payment;
 }
 
-function scheduleDemoOutcome(payment, outcome = 'success', delayMs = 7000) {
-  const timer = setTimeout(() => {
-    const fresh = store.payments.find((p) => p.id === payment.id);
-    if (!fresh || fresh.status !== 'pending') return;
-    const presets = {
-      success: { status: 'success', resultCode: '0', resultDesc: 'The service request is processed successfully.' },
-      cancelled: { status: 'cancelled', resultCode: '1032', resultDesc: 'Request cancelled by user' },
-      failed: { status: 'failed', resultCode: '1', resultDesc: 'The balance is insufficient for the transaction' },
-      timeout: { status: 'timeout', resultCode: '1037', resultDesc: 'DS timeout user cannot be reached' },
-    };
-    applyOutcome(fresh, presets[outcome] || presets.success);
-  }, delayMs);
-  if (typeof timer.unref === 'function') timer.unref();
-}
 
 function validationError(message) {
   const err = new Error(message);
@@ -130,6 +116,19 @@ function requireAdmin(req, res, next) {
   const supplied = req.get('x-admin-pin') || req.body?.adminPin || '';
   if (supplied === pin) return next();
   return res.status(401).json({ error: 'A valid admin PIN is required to change settings.' });
+}
+
+/* There is no demo mode: any endpoint that would move money refuses to run
+   until real Daraja credentials are saved. */
+function ensureLive(res) {
+  const s = mpesa.resolveSettings();
+  if (s.live) return true;
+  res.status(503).json({
+    error:
+      'M-Pesa is not configured. Save your consumer key, secret, passkey and shortcode in Settings first.',
+    missing: s.missing,
+  });
+  return false;
 }
 
 /* --------------------------------------------------------------- SSE stream */
@@ -166,7 +165,7 @@ app.get('/api/health', (req, res) => {
     ok: true,
     name: 'Jimmy Pro',
     version: require('../package.json').version,
-    mode: s.live ? 'live' : 'demo',
+    mode: s.live ? 'live' : 'unconfigured',
     environment: s.environment,
     uptime: Math.round(process.uptime()),
     payments: store.payments.length,
@@ -199,7 +198,6 @@ app.put('/api/settings', requireAdmin, (req, res) => {
     'transactionType',
     'callbackUrl',
     'businessName',
-    'demoMode',
     'initiatorName',
     'senderShortcode',
     'b2bCommandId',
@@ -224,10 +222,6 @@ app.put('/api/settings', requireAdmin, (req, res) => {
     if (key === 'transactionType') {
       next[key] =
         b[key] === 'CustomerBuyGoodsOnline' ? 'CustomerBuyGoodsOnline' : 'CustomerPayBillOnline';
-      continue;
-    }
-    if (key === 'demoMode') {
-      next[key] = typeof b[key] === 'boolean' ? b[key] : null;
       continue;
     }
     next[key] = String(b[key]).trim();
@@ -281,7 +275,7 @@ app.post('/api/settings/reset', requireAdmin, (req, res) => {
 /* ------------------------------------------------------------------ payments */
 
 app.post('/api/payments', async (req, res) => {
-  const s = mpesa.resolveSettings();
+  if (!ensureLive(res)) return;
   const b = req.body || {};
 
   const requestedMode = b.mode === 'link' ? 'link' : 'prompt';
@@ -314,7 +308,7 @@ app.post('/api/payments', async (req, res) => {
     accountReference: String(b.accountReference || 'JimmyPro').slice(0, 60),
     description: String(b.description || 'Payment request').slice(0, 140),
     status: 'pending',
-    mode: s.live ? 'live' : 'demo',
+    mode: 'live',
     flow: requestedMode,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -335,18 +329,6 @@ app.post('/api/payments', async (req, res) => {
     store.save();
     broadcast('payment', { payment });
     return res.status(201).json({ payment: decorate(req, payment), linkOnly: true });
-  }
-
-  if (!s.live) {
-    payment.checkoutRequestId = `ws_CO_DEMO_${Date.now()}`;
-    payment.merchantRequestId = `demo-${shortCode(10)}`;
-    payment.attempts = 1;
-    payment.history.push({ at: payment.createdAt, event: 'demo_prompt_sent' });
-    store.payments.unshift(payment);
-    store.save();
-    scheduleDemoOutcome(payment, b.simulateOutcome || 'success', 7000);
-    broadcast('payment', { payment });
-    return res.status(201).json({ payment: decorate(req, payment), demo: true });
   }
 
   try {
@@ -414,24 +396,6 @@ app.post('/api/payments/:id/query', async (req, res) => {
     return res.json({ payment: decorate(req, payment), unchanged: true });
   }
 
-  if (payment.mode === 'demo') {
-    /* In demo mode a manual check nudges the simulation forward. */
-    const age = Date.now() - new Date(payment.createdAt).getTime();
-    if (age > 4000) {
-      applyOutcome(payment, {
-        status: 'success',
-        resultCode: '0',
-        resultDesc: 'The service request is processed successfully.',
-      });
-      return res.json({ payment: decorate(req, payment), checked: true });
-    }
-    return res.json({
-      payment: decorate(req, payment),
-      checked: true,
-      message: 'Waiting for the customer to approve on their phone.',
-    });
-  }
-
   try {
     const result = await mpesa.stkQuery(payment);
     if (result.pending) {
@@ -456,9 +420,14 @@ app.post('/api/payments/:id/query', async (req, res) => {
 });
 
 app.post('/api/payments/:id/retry', async (req, res) => {
+  if (!ensureLive(res)) return;
   const original = findPayment(req.params.id);
   if (!original) return res.status(404).json({ error: 'Payment not found.' });
-  const s = mpesa.resolveSettings();
+  if (!original.phone) {
+    return res.status(400).json({
+      error: 'This request has no phone number yet. Share its pay link instead of prompting.',
+    });
+  }
 
   const clone = {
     ...original,
@@ -478,17 +447,6 @@ app.post('/api/payments/:id/retry', async (req, res) => {
     history: [{ at: new Date().toISOString(), event: 'retry_created', detail: `Retry of ${original.ref}` }],
   };
 
-  if (!s.live) {
-    clone.checkoutRequestId = `ws_CO_DEMO_${Date.now()}`;
-    clone.merchantRequestId = `demo-${shortCode(10)}`;
-    clone.attempts = 1;
-    store.payments.unshift(clone);
-    store.save();
-    scheduleDemoOutcome(clone, 'success', 7000);
-    broadcast('payment', { payment: clone });
-    return res.status(201).json({ payment: decorate(req, clone), demo: true });
-  }
-
   try {
     const push = await mpesa.stkPush(clone);
     clone.checkoutRequestId = push.checkoutRequestId;
@@ -504,25 +462,6 @@ app.post('/api/payments/:id/retry', async (req, res) => {
   }
 });
 
-app.post('/api/payments/:id/outcome', (req, res) => {
-  const payment = findPayment(req.params.id);
-  if (!payment) return res.status(404).json({ error: 'Payment not found.' });
-  if (payment.mode !== 'demo') {
-    return res.status(400).json({ error: 'Only demo payments can be resolved manually.' });
-  }
-  if (payment.status !== 'pending') {
-    return res.status(409).json({ error: `This payment is already ${payment.status}.` });
-  }
-  const presets = {
-    success: { status: 'success', resultCode: '0', resultDesc: 'The service request is processed successfully.' },
-    cancelled: { status: 'cancelled', resultCode: '1032', resultDesc: 'Request cancelled by user' },
-    failed: { status: 'failed', resultCode: '1', resultDesc: 'The balance is insufficient for the transaction' },
-    timeout: { status: 'timeout', resultCode: '1037', resultDesc: 'DS timeout user cannot be reached' },
-  };
-  const outcome = presets[req.body?.outcome] || presets.success;
-  applyOutcome(payment, outcome);
-  res.json({ payment: decorate(req, payment) });
-});
 
 app.delete('/api/payments/:id', (req, res) => {
   const index = store.payments.findIndex(
@@ -578,7 +517,7 @@ app.get('/api/stats', (req, res) => {
     successRate: settled ? Math.round((success.length / settled) * 100) : 0,
     average: success.length ? Math.round(collected / success.length) : 0,
     series,
-    mode: mpesa.resolveSettings().live ? 'live' : 'demo',
+    mode: mpesa.resolveSettings().live ? 'live' : 'unconfigured',
   });
 });
 
@@ -617,6 +556,7 @@ function decorateB2b(p) {
 }
 
 app.post('/api/b2b/payments', async (req, res) => {
+  if (!ensureLive(res)) return;
   const s = mpesa.resolveSettings();
   const body = req.body || {};
 
@@ -632,7 +572,7 @@ app.post('/api/b2b/payments', async (req, res) => {
     accountReference: String(body.accountReference || 'JimmyPro').slice(0, 60),
     remarks: String(body.remarks || 'B2B payment').slice(0, 140),
     status: 'pending',
-    mode: s.live ? 'live' : 'demo',
+    mode: 'live',
     conversationId: null,
     originatorConversationId: null,
     transactionId: null,
@@ -652,31 +592,6 @@ app.post('/api/b2b/payments', async (req, res) => {
   }
   if (!b2b.COMMANDS.some((c) => c.id === record.commandId)) {
     return res.status(400).json({ error: 'Unknown CommandID.' });
-  }
-
-  if (!s.live) {
-    record.conversationId = `DEMO-CONV-${shortCode(10)}`;
-    record.originatorConversationId = `DEMO-ORIG-${shortCode(10)}`;
-    record.resultDesc = 'Accepted for processing (demo)';
-    store.b2b.unshift(record);
-    store.save();
-    broadcast('b2b', { payment: record });
-
-    const timer = setTimeout(() => {
-      const fresh = store.b2b.find((x) => x.id === record.id);
-      if (!fresh || fresh.status !== 'pending') return;
-      fresh.status = 'success';
-      fresh.resultCode = '0';
-      fresh.resultDesc = 'The service request is processed successfully.';
-      fresh.transactionId = `DEMO${shortCode(8)}`;
-      fresh.completedAt = new Date().toISOString();
-      fresh.updatedAt = fresh.completedAt;
-      store.save();
-      broadcast('b2b', { payment: fresh });
-    }, 4000);
-    if (typeof timer.unref === 'function') timer.unref();
-
-    return res.status(201).json({ payment: decorateB2b(record), demo: true });
   }
 
   try {
@@ -799,6 +714,7 @@ function decorateKyc(check) {
 }
 
 app.post('/api/kyc/validate', async (req, res) => {
+  if (!ensureLive(res)) return;
   const s = mpesa.resolveSettings();
   const body = req.body || {};
   const msisdn = mpesa.normalizePhone(body.msisdn);
@@ -821,21 +737,10 @@ app.post('/api/kyc/validate', async (req, res) => {
     status: 'pending',
     code: null,
     description: null,
-    mode: s.live ? 'live' : 'demo',
+    mode: 'live',
     createdAt: new Date().toISOString(),
     raw: null,
   };
-
-  if (!s.live) {
-    check.status = 'valid';
-    check.code = '0';
-    check.description = 'Demo result: ID and number matched (simulated, no Safaricom call made).';
-    check.raw = { demo: true, responseCode: '0', responseDescription: check.description };
-    store.kyc.unshift(check);
-    store.save();
-    broadcast('kyc', { check });
-    return res.status(201).json({ check: decorateKyc(check), demo: true });
-  }
 
   try {
     const result = await kyc.validateId({
@@ -917,6 +822,7 @@ app.get('/api/public/pay/:ref', (req, res) => {
 });
 
 app.post('/api/public/pay/:ref/prompt', rateLimit, async (req, res) => {
+  if (!ensureLive(res)) return;
   const payment = findPayment(req.params.ref);
   if (!payment) return res.status(404).json({ error: 'This payment link is not valid.' });
   if (payment.status !== 'pending') {
@@ -928,17 +834,6 @@ app.post('/api/public/pay/:ref/prompt', rateLimit, async (req, res) => {
     return res.status(400).json({ error: 'Enter a valid Safaricom number, e.g. 0712 345 678.' });
   }
   payment.payerPhone = phone;
-
-  if (!s.live) {
-    payment.checkoutRequestId = `ws_CO_DEMO_${Date.now()}`;
-    payment.merchantRequestId = `demo-${shortCode(10)}`;
-    payment.attempts = (payment.attempts || 0) + 1;
-    payment.history.push({ at: new Date().toISOString(), event: 'demo_prompt_sent', detail: phone });
-    store.save();
-    scheduleDemoOutcome(payment, 'success', 6000);
-    broadcast('payment', { payment });
-    return res.json({ ok: true, demo: true, message: 'Prompt sent to your phone.' });
-  }
 
   try {
     const push = await mpesa.stkPush({ ...payment, phone });
@@ -1081,7 +976,8 @@ const server = app.listen(PORT, () => {
   console.log('  Jimmy Pro');
   console.log('  ---------------------------------------------');
   console.log(`  Local:    http://localhost:${PORT}`);
-  console.log(`  Mode:     ${s.live ? 'LIVE (M-Pesa calls are real)' : 'DEMO (nothing is charged)'}`);
+  console.log(`  Mode:     ${s.live ? 'LIVE (M-Pesa calls are real)' : 'NOT CONFIGURED (add Daraja credentials)'}`);
+  if (!s.live) console.log(`  Missing:  ${s.missing.join(', ')}`);
   console.log(`  Env:      ${s.environment}`);
   console.log(`  Callback: ${s.callbackUrl || '(not set)'}`);
   console.log('  ---------------------------------------------');

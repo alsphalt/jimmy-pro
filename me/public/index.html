@@ -153,16 +153,6 @@
         <input id="description" name="description" maxlength="140" placeholder="Order payment" />
       </label>
 
-      <label class="field demo-only" id="outcomeField">
-        <span>Test outcome <em>(demo only)</em></span>
-        <select id="simulateOutcome">
-          <option value="success">Customer pays successfully</option>
-          <option value="cancelled">Customer cancels</option>
-          <option value="failed">Insufficient funds</option>
-          <option value="timeout">No response (timeout)</option>
-        </select>
-      </label>
-
       <button class="btn btn-primary btn-block" id="sendPromptBtn" type="submit">
         <span class="btn-label">Send M-Pesa prompt</span>
         <span class="spinner" hidden></span>
@@ -213,14 +203,6 @@
         <button class="btn btn-ghost" id="checkStatusBtn">Check status</button>
         <button class="btn btn-ghost" id="copyResultLinkBtn">Copy pay link</button>
         <button class="btn btn-ghost" id="shareResultBtn">Share</button>
-      </div>
-      <div class="result-demo" id="resultDemo" hidden>
-        <p class="muted">Demo mode: finish this request manually.</p>
-        <div class="result-actions">
-          <button class="btn btn-mini" data-outcome="success">Mark paid</button>
-          <button class="btn btn-mini" data-outcome="cancelled">Cancel</button>
-          <button class="btn btn-mini" data-outcome="failed">Fail</button>
-        </div>
       </div>
       <button class="link-btn" id="newAnotherBtn">Start another request</button>
     </div>
@@ -429,8 +411,8 @@
       <div class="mode-head">
         <span class="dot-live" id="modeDot"></span>
         <div>
-          <strong id="modeTitle">Demo mode</strong>
-          <p class="muted" id="modeText">No real money moves. Every flow works end to end so you can trial it.</p>
+          <strong id="modeTitle">Not configured</strong>
+          <p class="muted" id="modeText">Save your Daraja credentials to send real M-Pesa prompts.</p>
         </div>
       </div>
       <a class="link-btn" href="https://developer.safaricom.co.ke" target="_blank" rel="noopener">Get Daraja credentials →</a>
@@ -527,14 +509,6 @@
         <p class="hint" id="certStatus">Security credential: checking…</p>
       </div>
 
-      <label class="field">
-        <span>Force demo mode</span>
-        <div class="switch-row">
-          <input type="checkbox" id="setDemoMode" class="switch" />
-          <small class="hint">On: never call Safaricom, even with credentials saved.</small>
-        </div>
-      </label>
-
       <label class="field" id="adminPinField" hidden>
         <span>Admin PIN</span>
         <input id="setAdminPin" type="password" placeholder="Required to save settings" />
@@ -578,7 +552,7 @@
         <button class="btn btn-ghost btn-small" id="clearCacheBtn">Clear</button>
       </div>
       <div class="setting-row">
-        <div><strong>Reset M-Pesa settings</strong><span class="muted small">Back to demo mode</span></div>
+        <div><strong>Clear M-Pesa settings</strong><span class="muted small">Removes every saved credential</span></div>
         <button class="btn btn-ghost btn-small" id="resetSettingsBtn">Reset</button>
       </div>
       <p class="fineprint" id="versionLine">Jimmy Pro v1.0.0</p>
@@ -636,14 +610,6 @@
       <button class="btn btn-ghost" id="sheetShareBtn">Share</button>
       <button class="btn btn-ghost" id="sheetReceiptBtn" hidden>Copy receipt</button>
       <button class="btn btn-danger" id="sheetDeleteBtn">Delete</button>
-    </div>
-    <div class="sheet-demo" id="sheetDemo" hidden>
-      <p class="muted small">Demo resolution</p>
-      <div class="result-actions">
-        <button class="btn btn-mini" data-outcome="success">Mark paid</button>
-        <button class="btn btn-mini" data-outcome="cancelled">Cancel</button>
-        <button class="btn btn-mini" data-outcome="failed">Fail</button>
-      </div>
     </div>
   </div>
 </div>

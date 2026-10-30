@@ -51,7 +51,6 @@
     $('#waitAmount').textContent = kes(data.amount);
     $('#pDesc').textContent = data.description || 'Payment request';
     $('#pRef').textContent = data.ref;
-    $('#demoBanner').hidden = data.mode !== 'demo';
 
     if (data.status === 'success') {
       renderSuccess(data);
@@ -122,9 +121,8 @@
       state.attempts += 1;
       show('payWaiting');
       $('#waitTitle').textContent = 'Check your phone';
-      $('#waitText').textContent = data.demo
-        ? 'Demo mode: this resolves automatically in a few seconds.'
-        : data.message || 'Enter your M-Pesa PIN on the prompt to approve.';
+      $('#waitText').textContent =
+        data.message || 'Enter your M-Pesa PIN on the prompt to approve.';
       startPolling();
     } catch (err) {
       error(err.message);

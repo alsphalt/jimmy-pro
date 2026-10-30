@@ -42,11 +42,6 @@ function resolveSettings() {
       ? 'production'
       : 'sandbox';
 
-  const forced = envOr('DEMO_MODE', '');
-  let demoMode;
-  if (forced === 'true' || forced === '1') demoMode = true;
-  else if (forced === 'false' || forced === '0') demoMode = false;
-
   const settings = {
     environment,
     consumerKey: String(pick('MPESA_CONSUMER_KEY', 'consumerKey')),
@@ -60,7 +55,6 @@ function resolveSettings() {
         : 'CustomerPayBillOnline',
     callbackUrl: String(pick('MPESA_CALLBACK_URL', 'callbackUrl')),
     businessName: String(pick('BUSINESS_NAME', 'businessName', 'Jimmy Pro')),
-    demoMode,
 
     /* B2B (business to business) */
     initiatorName: String(pick('MPESA_INITIATOR_NAME', 'initiatorName')),
@@ -79,11 +73,15 @@ function resolveSettings() {
     ),
   };
 
-  settings.hasCredentials = Boolean(
-    settings.consumerKey && settings.consumerSecret && settings.passkey && settings.shortcode
-  );
-  settings.live = settings.demoMode === true ? false : settings.hasCredentials;
-  settings.demo = !settings.live;
+  settings.missing = [];
+  if (!settings.consumerKey) settings.missing.push('consumer key');
+  if (!settings.consumerSecret) settings.missing.push('consumer secret');
+  if (!settings.passkey) settings.missing.push('passkey');
+  if (!settings.shortcode) settings.missing.push('shortcode');
+  settings.hasCredentials = settings.missing.length === 0;
+
+  /* No simulation fallback: without credentials every money endpoint refuses. */
+  settings.live = settings.hasCredentials;
   settings.baseUrl = BASES[settings.environment];
   return settings;
 }
@@ -97,8 +95,7 @@ function publicSettings() {
     callbackUrl: s.callbackUrl,
     businessName: s.businessName,
     live: s.live,
-    demo: s.demo,
-    demoForced: s.demoMode === true,
+    missing: s.missing,
     hasCredentials: s.hasCredentials,
     initiatorName: s.initiatorName,
     senderShortcode: s.senderShortcode,
@@ -131,7 +128,6 @@ function envLockedFields() {
     transactionType: 'MPESA_TRANSACTION_TYPE',
     callbackUrl: 'MPESA_CALLBACK_URL',
     businessName: 'BUSINESS_NAME',
-    demoMode: 'DEMO_MODE',
   };
   for (const [field, key] of Object.entries(map)) {
     if (envOr(key, '') !== '') fields[field] = true;
@@ -275,7 +271,7 @@ async function getAccessToken({ force = false } = {}) {
 
 async function stkPush(payment) {
   const s = resolveSettings();
-  if (!s.live) throw new Error('Live mode is not configured. Add M-Pesa credentials in Settings.');
+  if (!s.live) throw new Error('M-Pesa is not configured. Add your consumer key, secret, passkey and shortcode in Settings.');
 
   const token = await getAccessToken();
   const timestamp = nairobiTimestamp();
@@ -340,7 +336,7 @@ async function stkPush(payment) {
 
 async function stkQuery(payment) {
   const s = resolveSettings();
-  if (!s.live) throw new Error('Live mode is not configured.');
+  if (!s.live) throw new Error('M-Pesa is not configured.');
 
   const token = await getAccessToken();
   const timestamp = nairobiTimestamp();
