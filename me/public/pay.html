@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pay with M-Pesa · Jimmy Pro</title>
+<meta name="theme-color" content="#04140d" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" href="/icons/icon-192.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+<link rel="stylesheet" href="/css/styles.css" />
+<style>
+  .pay-wrap {
+    max-width: 460px;
+    margin: 0 auto;
+    padding: 28px 18px calc(32px + env(safe-area-inset-bottom, 0px));
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .pay-brand {
+    display: flex; align-items: center; gap: 10px;
+    justify-content: center; margin-bottom: 22px;
+  }
+  .pay-card {
+    background: linear-gradient(165deg, rgba(19, 64, 43, 0.75), rgba(6, 27, 18, 0.92));
+    border: 1px solid rgba(74, 222, 128, 0.22);
+    border-radius: 24px;
+    padding: 26px 22px;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,.07);
+  }
+  .pay-to { font-size: 12.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+  .pay-business { font-size: 19px; font-weight: 680; margin: 6px 0 18px; }
+  .pay-amount { font-size: 44px; font-weight: 720; letter-spacing: -.04em; line-height: 1; margin-bottom: 6px; }
+  .pay-desc { font-size: 13.5px; color: var(--muted); margin-bottom: 20px; }
+  .pay-ref {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 11px 13px; border-radius: 12px; background: rgba(0,0,0,.26);
+    font-size: 12.5px; margin-bottom: 18px;
+  }
+  .pay-ref span { color: var(--muted); }
+  .pay-ref strong { font-variant-numeric: tabular-nums; }
+  .pay-note {
+    font-size: 11.8px; color: var(--muted); line-height: 1.5;
+    text-align: center; margin-top: 14px;
+  }
+  .pay-status { text-align: center; padding: 10px 0 4px; }
+  .pay-status .pulse-ring { margin: 0 auto 14px; width: 54px; height: 54px; }
+  .pay-status .pulse-ring span { width: 16px; height: 16px; }
+  .pay-status h2 { font-size: 20px; margin-bottom: 6px; }
+  .pay-status p { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+  .receipt {
+    margin-top: 18px; padding: 14px; border-radius: 13px;
+    background: rgba(34,197,94,.1); border: 1px solid rgba(74,222,128,.3);
+    text-align: left;
+  }
+  .receipt div { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+  .receipt span { color: var(--muted); }
+  .pay-error {
+    padding: 12px 14px; border-radius: 12px; margin-bottom: 14px;
+    background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.3);
+    color: #ffb4b4; font-size: 13px;
+  }
+  .demo-banner {
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 13px; border-radius: 12px; margin-bottom: 16px;
+    background: rgba(245,185,66,.1); border: 1px solid rgba(245,185,66,.3);
+    color: #ffe0a3; font-size: 12px; line-height: 1.45;
+  }
+</style>
+</head>
+<body>
+<div class="pay-wrap">
+  <div class="pay-brand">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M5 13.5l4.2 4.2L19 7.6" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="brand-text"><strong>Jimmy Pro</strong><span>Secure M-Pesa checkout</span></div>
+  </div>
+
+  <div class="pay-card" id="payCard">
+    <div id="payLoading">
+      <div class="skeleton-row" style="height:86px;margin-bottom:14px"></div>
+      <div class="skeleton-row" style="height:54px"></div>
+    </div>
+
+    <div id="payBody" hidden>
+      <div class="demo-banner" id="demoBanner" hidden>
+        <span>Demo mode — no money will be deducted. Use this to trial the flow.</span>
+      </div>
+
+      <div id="payRequest">
+        <p class="pay-to">Payment to</p>
+        <p class="pay-business" id="pBusiness">Jimmy Pro</p>
+        <p class="pay-amount" id="pAmount">KES 0</p>
+        <p class="pay-desc" id="pDesc">Payment request</p>
+
+        <div class="pay-ref">
+          <span>Reference</span>
+          <strong id="pRef">JP-000000</strong>
+        </div>
+
+        <div class="pay-error" id="payError" hidden></div>
+
+        <form id="payForm" autocomplete="off">
+          <label class="field">
+            <span>Your Safaricom number</span>
+            <div class="input-wrap">
+              <span class="prefix">+254</span>
+              <input id="pPhone" inputmode="tel" placeholder="712 345 678" required />
+            </div>
+            <small class="hint">We send an M-Pesa prompt to this number.</small>
+          </label>
+          <button class="btn btn-primary btn-block" id="payBtn" type="submit">
+            <span class="btn-label">Pay with M-Pesa</span>
+            <span class="spinner" hidden></span>
+          </button>
+        </form>
+        <p class="pay-note">You will get a PIN prompt on your phone. Enter your M-Pesa PIN to confirm.</p>
+      </div>
+
+      <div class="pay-status" id="payWaiting" hidden>
+        <div class="pulse-ring"><span></span></div>
+        <h2 id="waitTitle">Check your phone</h2>
+        <p id="waitText">Enter your M-Pesa PIN to approve this payment.</p>
+        <div class="pay-ref" style="margin-top:18px">
+          <span>Amount</span><strong id="waitAmount">KES 0</strong>
+        </div>
+        <button class="btn btn-ghost btn-block" id="payRetryBtn" type="button" hidden>Try again</button>
+      </div>
+
+      <div class="pay-status" id="payDone" hidden>
+        <div class="pulse-ring success"><span></span></div>
+        <h2>Payment received</h2>
+        <p>Thank you. Your M-Pesa receipt is below.</p>
+        <div class="receipt" id="payReceipt">
+          <div><span>Receipt</span><strong id="rReceipt">—</strong></div>
+          <div><span>Amount</span><strong id="rAmount">—</strong></div>
+          <div><span>Reference</span><strong id="rRef">—</strong></div>
+        </div>
+      </div>
+
+      <div class="pay-status" id="payClosed" hidden>
+        <div class="pulse-ring failed"><span></span></div>
+        <h2 id="closedTitle">This request is closed</h2>
+        <p id="closedText">It may have expired or already been paid.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="pay-note" style="margin-top:16px">Secured by Safaricom M-Pesa · Jimmy Pro</p>
+</div>
+
+<script src="/js/pay.js" defer></script>
+</body>
+</html>
