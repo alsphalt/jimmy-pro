@@ -396,6 +396,13 @@ app.post('/api/auth/login', (req, res) => {
   res.json(authPayload(req, user));
 });
 
+app.get('/api/auth/channel', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return noSession(res);
+  const plan = auth.collectionPlan(user);
+  res.json({ ...plan, settingsShortcode: mpesa.resolveSettings().shortcode || null });
+});
+
 app.get('/api/auth/me', (req, res) => {
   const user = req.auth?.user;
   if (!user) {
@@ -710,6 +717,13 @@ app.post('/api/payments', async (req, res) => {
     });
   }
 
+  /* Which collection flow this business actually has. Refusing here means the
+     owner learns why before a customer is ever prompted. */
+  const plan = auth.collectionPlan(req.auth?.user);
+  if (!plan.supported) {
+    return res.status(400).json({ error: plan.reason, accountType: plan.type, channelUnsupported: true });
+  }
+
   const requestedMode = b.mode === 'link' ? 'link' : 'prompt';
 
   /* A shared link has no payer yet - the payer supplies their number. */
@@ -734,8 +748,13 @@ app.post('/api/payments', async (req, res) => {
   const payment = {
     id: crypto.randomUUID(),
     ref: uniqueRef(),
-    /* Whose money this is: the signed-in business. */
+    /* Whose money this is, and which collection route it takes. */
     ownerId: req.auth?.user?.id || null,
+    channel: {
+      accountType: plan.type || null,
+      shortcode: plan.shortcode || null,
+      transactionType: plan.transactionType || null,
+    },
     phone,
     payerPhone: null,
     amount: Math.round(amount),
@@ -766,7 +785,10 @@ app.post('/api/payments', async (req, res) => {
   }
 
   try {
-    const push = await mpesa.stkPush(payment);
+    const push = await mpesa.stkPush(payment, {
+      shortcode: plan.shortcode,
+      transactionType: plan.transactionType,
+    });
     payment.checkoutRequestId = push.checkoutRequestId;
     payment.merchantRequestId = push.merchantRequestId;
     payment.attempts = 1;
@@ -1302,7 +1324,15 @@ app.post('/api/public/pay/:ref/prompt', rateLimit, async (req, res) => {
   }
 
   try {
-    const push = await mpesa.stkPush({ ...payment, phone });
+    const owner = payment.ownerId ? auth.findUserById(payment.ownerId) : null;
+    const payPlan = auth.collectionPlan(owner);
+    if (!payPlan.supported) {
+      return res.status(400).json({ error: payPlan.reason, accountType: payPlan.type, channelUnsupported: true });
+    }
+    const push = await mpesa.stkPush(
+      { ...payment, phone },
+      { shortcode: payPlan.shortcode, transactionType: payPlan.transactionType }
+    );
     payment.payerPhone = phone;
     payment.checkoutRequestId = push.checkoutRequestId;
     payment.merchantRequestId = push.merchantRequestId;

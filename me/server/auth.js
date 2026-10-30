@@ -233,6 +233,62 @@ function setAccount(user, { type, number }) {
   return user;
 }
 
+
+/**
+ * How money is collected for a business's chosen account type.
+ *
+ * Daraja's STK push settles to a *shortcode*: Buy Goods (till/pochi) or Paybill.
+ * It cannot push to a personal number or straight into a bank account, so those
+ * two types are refused with an explanation instead of being sent down a flow
+ * that would fail at Safaricom with something opaque.
+ */
+function collectionPlan(user) {
+  const account = user?.account;
+  if (!account || !account.number) {
+    return { supported: true, source: 'settings', shortcode: null, transactionType: null, note: 'Using the install default.' };
+  }
+  const number = String(account.number).replace(/\s/g, '');
+  const numeric = /^\d{5,7}$/.test(number);
+
+  if (account.type === 'till') {
+    if (!numeric) {
+      return { supported: false, reason: 'A till number is 5-7 digits. Check the number you entered.', type: 'till' };
+    }
+    return { supported: true, type: 'till', shortcode: number, transactionType: 'CustomerBuyGoodsOnline', note: 'Buy Goods prompt to the till.' };
+  }
+  if (account.type === 'pochi') {
+    if (!numeric) {
+      return { supported: false, reason: 'A Pochi la Biashara number is 5-7 digits.', type: 'pochi' };
+    }
+    return { supported: true, type: 'pochi', shortcode: number, transactionType: 'CustomerBuyGoodsOnline', note: 'Buy Goods prompt to the Pochi store number.' };
+  }
+  if (account.type === 'paybill') {
+    if (!numeric) {
+      return { supported: false, reason: 'A paybill number is 5-7 digits.', type: 'paybill' };
+    }
+    return { supported: true, type: 'paybill', shortcode: number, transactionType: 'CustomerPayBillOnline', note: 'Paybill prompt; the account reference identifies the customer.' };
+  }
+  if (account.type === 'sendmoney') {
+    return {
+      supported: false,
+      type: 'sendmoney',
+      reason:
+        'A Send Money number cannot receive an M-Pesa request. STK collects to a shortcode, so a business needs a till ' +
+        'or paybill. Sending to a personal number is a B2C payout, which is a different flow (and needs its own Daraja product).',
+    };
+  }
+  if (account.type === 'bank') {
+    return {
+      supported: false,
+      type: 'bank',
+      reason:
+        'M-Pesa cannot settle an STK push into a bank account. Collection needs a paybill or till; the bank is where ' +
+        'the money is swept afterwards, not where the customer pays.',
+    };
+  }
+  return { supported: false, reason: 'That account type has no collection flow.' };
+}
+
 /* ---------------------------------------------------------------------- pin */
 
 function setPin(user, pin) {
@@ -478,6 +534,7 @@ function cookieString(name, value, { maxAge } = {}) {
 
 module.exports = {
   ACCOUNT_TYPES,
+  collectionPlan,
   SESSION_COOKIE,
   DEVICE_COOKIE,
   SESSION_TTL_MS,

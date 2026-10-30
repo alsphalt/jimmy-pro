@@ -418,13 +418,21 @@ async function getAccessToken({ force = false } = {}) {
 
 /* ----------------------------------------------------------------- STK push */
 
-async function stkPush(payment) {
+/**
+ * @param overrides {shortcode, transactionType} - a business's own till/paybill,
+ *   so one deployment can collect for more than one account type. The passkey and
+ *   callback stay from settings: they are per-credential, not per-account.
+ */
+async function stkPush(payment, overrides = {}) {
   const s = resolveSettings();
   if (!s.live) throw new Error('M-Pesa is not configured. Add your consumer key, secret, passkey and shortcode in Settings.');
 
+  const shortcode = String(overrides.shortcode || s.shortcode);
+  const transactionType = overrides.transactionType || s.transactionType;
+
   const token = await getAccessToken();
   const timestamp = nairobiTimestamp();
-  const password = stkPassword(s.shortcode, s.passkey, timestamp);
+  const password = stkPassword(shortcode, s.passkey, timestamp);
   const callback = s.callbackUrl;
 
   if (!callback) {
@@ -434,13 +442,13 @@ async function stkPush(payment) {
   }
 
   const payload = {
-    BusinessShortCode: s.shortcode,
+    BusinessShortCode: shortcode,
     Password: password,
     Timestamp: timestamp,
-    TransactionType: s.transactionType,
+    TransactionType: transactionType,
     Amount: Math.round(Number(payment.amount)),
     PartyA: payment.phone,
-    PartyB: s.shortcode,
+    PartyB: shortcode,
     PhoneNumber: payment.phone,
     CallBackURL: callback,
     AccountReference: String(payment.accountReference || 'JimmyPro').slice(0, 12),
