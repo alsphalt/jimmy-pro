@@ -314,6 +314,12 @@ function authPayload(req, user) {
   };
 }
 
+/* Every authenticated auth-route answers the same way, so the client can tell
+   "you are not signed in" apart from "that input was wrong" and react. */
+function noSession(res) {
+  return res.status(401).json({ error: 'Sign in to continue.', loginRequired: true });
+}
+
 app.get('/api/auth/config', (req, res) => {
   res.json({
     hasAccounts: store.users.length > 0,
@@ -391,7 +397,7 @@ app.get('/api/auth/me', (req, res) => {
 
 app.put('/api/auth/profile', (req, res) => {
   const user = req.auth?.user;
-  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user) return noSession(res);
   try {
     auth.updateProfile(user, req.body || {});
     res.json(authPayload(req, user));
@@ -402,7 +408,7 @@ app.put('/api/auth/profile', (req, res) => {
 
 app.put('/api/auth/account', (req, res) => {
   const user = req.auth?.user;
-  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user) return noSession(res);
   try {
     auth.setAccount(user, req.body || {});
     res.json(authPayload(req, user));
@@ -414,7 +420,7 @@ app.put('/api/auth/account', (req, res) => {
 /* Honest capability endpoint: it never claims a code was sent. */
 app.post('/api/auth/verification/start', (req, res) => {
   const user = req.auth?.user;
-  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user) return noSession(res);
   if (!user.account) return res.status(400).json({ error: 'Choose an account type first.' });
   const meta = auth.ACCOUNT_TYPES[user.account.type];
   user.account.verification = {
@@ -437,7 +443,7 @@ app.post('/api/auth/verification/start', (req, res) => {
 
 app.post('/api/auth/pin', (req, res) => {
   const user = req.auth?.user;
-  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user) return noSession(res);
   try {
     if (user.pin) return res.status(409).json({ error: 'A PIN already exists. Change it instead.' });
     auth.setPin(user, req.body?.pin);
@@ -450,7 +456,7 @@ app.post('/api/auth/pin', (req, res) => {
 
 app.post('/api/auth/pin/change', (req, res) => {
   const user = req.auth?.user;
-  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user) return noSession(res);
   try {
     auth.verifyPin(user, req.body?.currentPin);
     auth.setPin(user, req.body?.newPin);
@@ -464,7 +470,7 @@ app.post('/api/auth/pin/change', (req, res) => {
 
 app.post('/api/auth/logout', (req, res) => {
   const authd = req.auth;
-  if (!authd?.user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!authd?.user) return noSession(res);
   try {
     /* Logging out is a sensitive action: it needs the PIN, not just a session. */
     auth.verifyPin(authd.user, req.body?.pin);
@@ -480,13 +486,13 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/devices', (req, res) => {
   const user = req.auth?.user;
-  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user) return noSession(res);
   res.json(authPayload(req, user).devices);
 });
 
 app.delete('/api/auth/devices/:id', (req, res) => {
   const authd = req.auth;
-  if (!authd?.user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!authd?.user) return noSession(res);
   try {
     auth.verifyPin(authd.user, req.body?.pin);
     auth.revokeDevice(authd.user.id, req.params.id);

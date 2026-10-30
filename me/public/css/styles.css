@@ -1049,3 +1049,23 @@ details.raw pre {
 .code-list li { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
 .code-list code { font-size: 13px; letter-spacing: .04em; color: var(--green-bright); }
 body.gate-open { overflow: hidden; }
+
+/* Errors must survive scrolling: on a phone the card is taller than the screen,
+   which is why a failed request looked like a dead button. */
+.gate-card #gateError {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 0;
+  scroll-margin-top: 12px;
+}
+.field input.is-invalid {
+  border-color: var(--red);
+  background: rgba(239, 68, 68, 0.07);
+}
+.field-error {
+  color: var(--red);
+  font-size: 12px;
+  margin-top: 4px;
+  display: block;
+}

@@ -18,10 +18,41 @@
     }
   }
 
-  function fail(message) {
+  function fail(message, { focus } = {}) {
     const box = $('#gateError');
     box.textContent = message;
     box.hidden = false;
+    /* On a phone the card is taller than the screen, so an error rendered at the
+       top was simply never seen - it looked like the button did nothing. */
+    /* Not every webview implements this; failing here would swallow the error we
+       are trying to show. */
+    if (typeof box.scrollIntoView === 'function') {
+      try {
+        box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (focus) {
+      const el = document.getElementById(focus);
+      if (el) el.focus({ preventScroll: false });
+    }
+  }
+
+  function clearFieldErrors(form) {
+    [...form.querySelectorAll('.field-error')].forEach((el) => el.remove());
+    [...form.querySelectorAll('.is-invalid')].forEach((el) => el.classList.remove('is-invalid'));
+  }
+
+  /** Marks the field and returns the message, so the caller can also banner it. */
+  function fieldError(input, message) {
+    if (!input) return message;
+    input.classList.add('is-invalid');
+    const hint = document.createElement('small');
+    hint.className = 'field-error';
+    hint.textContent = message;
+    input.parentElement.appendChild(hint);
+    return message;
   }
 
   async function api(path, { method = 'GET', body } = {}) {
@@ -36,6 +67,7 @@
       const err = new Error(data.error || 'Something went wrong.');
       err.status = res.status;
       err.data = data;
+      err.needsLogin = res.status === 401 && data.loginRequired === true;
       throw err;
     }
     return data;
@@ -64,7 +96,11 @@
   function resume() {
     const u = state.me?.user;
     if (!u) return show('login');
-    if (!u.profileComplete) return show('gateProfile');
+    if (!u.profileComplete) {
+      show('gateProfile');
+      restoreProfile();
+      return;
+    }
     if (!u.account?.number) return show('gateAccount');
     if (!u.pinSet) return show('gatePin');
     return close();
@@ -114,9 +150,34 @@
 
   /* ------------------------------------------------------------- onboarding */
 
+  function validateProfile() {
+    const name = $('#pName');
+    const phone = $('#pPhone');
+    const biz = $('#pBiz');
+    if (!name.value.trim()) return { message: fieldError(name, 'Enter your name.'), focus: 'pName' };
+    const digits = phone.value.replace(/\D/g, '');
+    const normalised = digits.startsWith('254')
+      ? digits
+      : digits.startsWith('0')
+        ? `254${digits.slice(1)}`
+        : digits.length === 9
+          ? `254${digits}`
+          : digits;
+    if (!/^254[17]\d{8}$/.test(normalised)) {
+      return { message: fieldError(phone, 'Enter a Safaricom number, e.g. 0712 345 678.'), focus: 'pPhone' };
+    }
+    if (!biz.value.trim()) return { message: fieldError(biz, 'Enter your business name.'), focus: 'pBiz' };
+    return null;
+  }
+
   async function saveProfile(event) {
     event.preventDefault();
+    const form = $('#gateProfile');
     const btn = $('#profileBtn');
+    if (btn.disabled) return; /* double tap on a slow phone */
+    clearFieldErrors(form);
+    const invalid = validateProfile();
+    if (invalid) return fail(invalid.message, { focus: invalid.focus });
     setBusy(btn, true);
     try {
       state.me = await api('/api/auth/profile', {
@@ -129,10 +190,39 @@
       });
       resume();
     } catch (err) {
+      /* A session that cannot be found (expired, or a different server instance
+         without the shared store) must not leave the user stuck on a form that
+         answers 401 forever. Keep their input and send them to sign in. */
+      if (err.needsLogin) {
+        state.pendingProfile = {
+          name: $('#pName').value,
+          phone: $('#pPhone').value,
+          business: {
+            name: $('#pBiz').value,
+            town: $('#pTown').value,
+            category: $('#pCat').value,
+          },
+        };
+        state.me = null;
+        show('gateLogin');
+        fail('Your session ended. Sign in again — your details are still here.');
+        return;
+      }
       fail(err.message);
     } finally {
       setBusy(btn, false);
     }
+  }
+
+  function restoreProfile() {
+    const p = state.pendingProfile;
+    if (!p) return;
+    $('#pName').value = p.name || '';
+    $('#pPhone').value = p.phone || '';
+    $('#pBiz').value = p.business?.name || '';
+    $('#pTown').value = p.business?.town || '';
+    $('#pCat').value = p.business?.category || '';
+    delete state.pendingProfile;
   }
 
   function renderAccountTypes() {

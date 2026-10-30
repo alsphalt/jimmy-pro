@@ -30,7 +30,7 @@
     <div class="pay-error" id="gateError" hidden></div>
 
     <!-- login -->
-    <form id="gateLogin" autocomplete="on" hidden>
+    <form id="gateLogin" autocomplete="on" novalidate hidden>
       <label class="field">
         <span>Email</span>
         <input id="loginEmail" type="email" autocomplete="username" required />
@@ -50,7 +50,7 @@
     </form>
 
     <!-- register -->
-    <form id="gateRegister" autocomplete="on" hidden>
+    <form id="gateRegister" autocomplete="on" novalidate hidden>
       <label class="field">
         <span>Email</span>
         <input id="regEmail" type="email" autocomplete="username" required />
@@ -67,7 +67,7 @@
     </form>
 
     <!-- step 1: business -->
-    <form id="gateProfile" hidden>
+    <form id="gateProfile" novalidate hidden>
       <label class="field"><span>Your name</span><input id="pName" required /></label>
       <label class="field"><span>M-Pesa phone number</span><input id="pPhone" inputmode="tel" placeholder="712 345 678" required /></label>
       <label class="field"><span>Business name</span><input id="pBiz" required /></label>
@@ -79,7 +79,7 @@
     </form>
 
     <!-- step 2: payment account -->
-    <form id="gateAccount" hidden>
+    <form id="gateAccount" novalidate hidden>
       <p class="gate-sub">Where does your money land?</p>
       <div class="type-list" id="typeList"></div>
       <p class="gate-note" id="typeNote" hidden></p>
@@ -98,7 +98,7 @@
     </div>
 
     <!-- step 4: PIN -->
-    <form id="gatePin" hidden>
+    <form id="gatePin" novalidate hidden>
       <p class="gate-sub">Choose a PIN for sensitive actions: signing out, changing details, removing a device.</p>
       <label class="field"><span>PIN (4–6 digits)</span><input id="pin1" type="password" inputmode="numeric" maxlength="6" required /></label>
       <label class="field"><span>Repeat PIN</span><input id="pin2" type="password" inputmode="numeric" maxlength="6" required /></label>
