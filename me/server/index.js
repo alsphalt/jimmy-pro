@@ -87,6 +87,15 @@ function decorate(req, p) {
   };
 }
 
+/* Records created before accounts existed have no ownerId. Treat those as
+   install-level so an upgrade never hides a shop's history, and treat everything
+   created from now on as belonging to exactly one business. */
+function visibleTo(req, payment) {
+  if (!payment.ownerId) return true;
+  if (req.auth?.adminPin) return true;
+  return req.auth?.user?.id === payment.ownerId;
+}
+
 function findPayment(idOrRef) {
   const needle = String(idOrRef || '').toLowerCase();
   return store.payments.find(
@@ -725,6 +734,8 @@ app.post('/api/payments', async (req, res) => {
   const payment = {
     id: crypto.randomUUID(),
     ref: uniqueRef(),
+    /* Whose money this is: the signed-in business. */
+    ownerId: req.auth?.user?.id || null,
     phone,
     payerPhone: null,
     amount: Math.round(amount),
@@ -783,12 +794,21 @@ app.post('/api/payments', async (req, res) => {
 });
 
 app.get('/api/payments', (req, res) => {
-  const { status, q } = req.query;
+  const { status, q, from, to } = req.query;
   const limit = Math.min(Number(req.query.limit) || 100, 300);
-  let rows = store.payments;
+  /* One business never sees another's money. */
+  let rows = store.payments.filter((p) => visibleTo(req, p));
 
   if (status && status !== 'all') {
     rows = rows.filter((p) => p.status === status);
+  }
+  if (from) {
+    const start = new Date(String(from));
+    if (!Number.isNaN(start.getTime())) rows = rows.filter((p) => new Date(p.createdAt) >= start);
+  }
+  if (to) {
+    const end = new Date(String(to));
+    if (!Number.isNaN(end.getTime())) rows = rows.filter((p) => new Date(p.createdAt) <= end);
   }
   if (q) {
     const needle = String(q).toLowerCase();
@@ -807,13 +827,13 @@ app.get('/api/payments', (req, res) => {
 
 app.get('/api/payments/:id', (req, res) => {
   const payment = findPayment(req.params.id);
-  if (!payment) return res.status(404).json({ error: 'Payment not found.' });
+  if (!payment || !visibleTo(req, payment)) return res.status(404).json({ error: 'Payment not found.' });
   res.json({ payment: decorate(req, payment) });
 });
 
 app.post('/api/payments/:id/query', async (req, res) => {
   const payment = findPayment(req.params.id);
-  if (!payment) return res.status(404).json({ error: 'Payment not found.' });
+  if (!payment || !visibleTo(req, payment)) return res.status(404).json({ error: 'Payment not found.' });
 
   if (payment.status !== 'pending') {
     return res.json({ payment: decorate(req, payment), unchanged: true });
@@ -845,7 +865,7 @@ app.post('/api/payments/:id/query', async (req, res) => {
 app.post('/api/payments/:id/retry', async (req, res) => {
   if (!ensureLive(res)) return;
   const original = findPayment(req.params.id);
-  if (!original) return res.status(404).json({ error: 'Payment not found.' });
+  if (!original || !visibleTo(req, original)) return res.status(404).json({ error: 'Payment not found.' });
   if (!original.phone) {
     return res.status(400).json({
       error: 'This request has no phone number yet. Share its pay link instead of prompting.',
@@ -888,7 +908,9 @@ app.post('/api/payments/:id/retry', async (req, res) => {
 
 app.delete('/api/payments/:id', (req, res) => {
   const index = store.payments.findIndex(
-    (p) => p.id === req.params.id || String(p.ref).toLowerCase() === String(req.params.id).toLowerCase()
+    (p) =>
+      (p.id === req.params.id || String(p.ref).toLowerCase() === String(req.params.id).toLowerCase()) &&
+      visibleTo(req, p)
   );
   if (index === -1) return res.status(404).json({ error: 'Payment not found.' });
   const [removed] = store.payments.splice(index, 1);
@@ -900,7 +922,7 @@ app.delete('/api/payments/:id', (req, res) => {
 /* --------------------------------------------------------------------- stats */
 
 app.get('/api/stats', (req, res) => {
-  const payments = store.payments;
+  const payments = store.payments.filter((p) => visibleTo(req, p));
   const success = payments.filter((p) => p.status === 'success');
   const pending = payments.filter((p) => p.status === 'pending');
   const failed = payments.filter((p) => ['failed', 'cancelled', 'timeout'].includes(p.status));
