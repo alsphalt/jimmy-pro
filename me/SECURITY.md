@@ -51,3 +51,26 @@ To have funds land on a personal number, pick one:
   Do not expose the owner API publicly without auth.
 - The payer-facing page (`/pay/:ref`) and `POST /api/public/pay/:ref/prompt`
   are meant to be public; everything else is not.
+
+## 4. Deploying to a host (the short version)
+
+Set these six, then redeploy. Nothing else is required — the callback URL is
+derived from `PUBLIC_URL`.
+
+| Variable | Example |
+|---|---|
+| `MPESA_ENV` | `sandbox` |
+| `MPESA_CONSUMER_KEY` | from the Daraja portal |
+| `MPESA_CONSUMER_SECRET` | from the Daraja portal |
+| `MPESA_PASSKEY` | the passkey for your shortcode |
+| `MPESA_SHORTCODE` | `174379` |
+| `PUBLIC_URL` | `https://your-app.vercel.app` (no trailing slash) |
+
+Check the result with `GET /api/health`. It reports `mode`, the exact `missing`
+list, whether a callback URL resolved, and whether the values came from
+`environment` or app settings — so "keys are wrong" and "keys never reached the
+process" stop looking the same.
+
+Saving credentials through the Settings screen also works, but on hosts with an
+ephemeral filesystem that data disappears on the next deploy; environment
+variables are the durable path.

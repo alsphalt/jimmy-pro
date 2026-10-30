@@ -159,6 +159,24 @@ app.get('/api/events', (req, res) => {
 
 /* -------------------------------------------------------------------- system */
 
+/* Names only, never values - enough to tell "env not applied" from "wrong key". */
+function configSource() {
+  const envKeys = [
+    'MPESA_CONSUMER_KEY',
+    'MPESA_CONSUMER_SECRET',
+    'MPESA_PASSKEY',
+    'MPESA_SHORTCODE',
+    'MPESA_CALLBACK_URL',
+    'PUBLIC_URL',
+  ].filter((k) => String(process.env[k] || '').trim());
+  const savedKeys = Object.keys(store.settings || {});
+  return {
+    env: envKeys,
+    savedInApp: savedKeys,
+    using: envKeys.length ? 'environment' : savedKeys.length ? 'app settings' : 'nothing',
+  };
+}
+
 app.get('/api/health', (req, res) => {
   const s = mpesa.resolveSettings();
   res.json({
@@ -167,6 +185,9 @@ app.get('/api/health', (req, res) => {
     version: require('../package.json').version,
     mode: s.live ? 'live' : 'unconfigured',
     environment: s.environment,
+    missing: s.missing,
+    config: configSource(),
+    callbackUrlSet: Boolean(s.callbackUrl),
     uptime: Math.round(process.uptime()),
     payments: store.payments.length,
     time: new Date().toISOString(),

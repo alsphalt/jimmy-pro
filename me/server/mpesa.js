@@ -53,7 +53,14 @@ function resolveSettings() {
       'CustomerBuyGoodsOnline'
         ? 'CustomerBuyGoodsOnline'
         : 'CustomerPayBillOnline',
-    callbackUrl: String(pick('MPESA_CALLBACK_URL', 'callbackUrl')),
+    /* PUBLIC_URL alone is enough: derive the callback from it before giving up,
+       so a host only has to set one public-address variable. */
+    callbackUrl: String(
+      pick('MPESA_CALLBACK_URL', 'callbackUrl') ||
+        (process.env.PUBLIC_URL
+          ? `${String(process.env.PUBLIC_URL).trim().replace(/\/+$/, '')}/api/mpesa/callback`
+          : '')
+    ),
     businessName: String(pick('BUSINESS_NAME', 'businessName', 'Jimmy Pro')),
 
     /* B2B (business to business) */
