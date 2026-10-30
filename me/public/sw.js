@@ -1,5 +1,7 @@
 /* Jimmy Pro service worker — app shell caching + offline fallback */
-const VERSION = 'jimmy-pro-v3';
+/* Bump on every shell change. Without it an installed app keeps its old cache
+   and never learns about new scripts. */
+const VERSION = 'jimmy-pro-v4';
 const SHELL = [
   '/',
   '/index.html',
@@ -7,6 +9,7 @@ const SHELL = [
   '/offline.html',
   '/css/styles.css',
   '/js/app.js',
+  '/js/auth.js',
   '/js/pay.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',

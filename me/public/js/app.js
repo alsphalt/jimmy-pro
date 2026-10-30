@@ -1388,6 +1388,28 @@ async function submitKyc(event) {
   /* ------------------------------------------------------------------- boot */
 
   async function boot() {
+    /* Fail closed. If the gate markup is present but auth.js did not load - a
+       stale service-worker cache, a flaky network, an old installed build - the
+       business form would sit there with no submit handler and pressing Continue
+       would do literally nothing. Say so instead of booting an unauthenticated
+       dashboard. */
+    if (!window.JimmyAuth) {
+      const gate = document.getElementById('gate');
+      if (gate) {
+        gate.hidden = false;
+        const box = document.getElementById('gateError');
+        const title = document.getElementById('gateTitle');
+        const sub = document.getElementById('gateSub');
+        if (title) title.textContent = 'Could not load sign-in';
+        if (sub) sub.textContent = 'The app shell is out of date or the connection dropped.';
+        if (box) {
+          box.hidden = false;
+          box.textContent = 'Reload the page. If you installed the app, close and reopen it so it picks up the update.';
+        }
+        return;
+      }
+    }
+
     /* Nothing loads until identity resolves: an unauthenticated visitor gets the
        gate, and the dashboard never renders with half-fetched data. */
     if (window.JimmyAuth) {
