@@ -164,7 +164,7 @@
       $(`#view-${v}`).hidden = v !== name;
     });
     $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.goto === name));
-    if (location.hash !== `#/${name}`) history.replaceState(null, '', `#/${name}`);
+    if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
     window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     if (name === 'history') loadPayments();
     if (name === 'business') {
@@ -178,7 +178,7 @@
   }
 
   function currentView() {
-    const m = location.hash.match(/^#\/(\w+)/);
+    const m = location.hash.match(/^#(\w+)/);
     return m ? m[1] : 'home';
   }
 
