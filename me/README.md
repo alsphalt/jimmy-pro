@@ -55,7 +55,15 @@ MPESA_CALLBACK_URL=https://your-public-host/api/mpesa/callback
 BUSINESS_NAME=Jimmy Pro
 ```
 
-`.env` always wins over values saved in the UI. Save settings then press **Test connection** — it fetches a real OAuth token and tells you if Safaricom accepted the credentials.
+`.env` always wins over values saved in the UI — and a field supplied by the
+environment cannot be changed from the form. The save response lists those in
+`ignored` so a dropped edit is visible instead of silent. Save settings then
+press **Test connection** — it fetches a real OAuth token and tells you if
+Safaricom accepted the credentials.
+
+On a serverless host the settings file lives in `/tmp`, so values saved **in the
+UI** do not survive a cold start. Environment variables are the only durable way
+to configure a deployment.
 
 ### The four that are actually required
 
@@ -71,8 +79,20 @@ friends are *not* read, and a stray name fails silently — the app just says "n
 configured". `GET /api/health` is the source of truth:
 
 ```bash
-curl -s https://your-host/api/health | jq '{mode, missing, requiredEnv, unrecognizedEnv, environmentInput, environmentRecognized}'
+curl -s https://your-host/api/health | jq '{mode, missing, requiredEnv, env, deployment, unrecognizedEnv, environmentInput}'
 ```
+
+`env` separates the three ways a variable can look missing:
+
+| Field | Meaning |
+| --- | --- |
+| `env.absent` | the name is not in the process at all — wrong scope, or a build that predates it |
+| `env.empty` | the name exists but the value is blank (or whitespace) |
+| `env.lengths` | character count per name — catches a truncated paste, never the value |
+
+`deployment` says which build answered and where: `vercelEnv` (`production` vs
+`preview`), the short `gitCommit`, branch and region. If `gitCommit` is not the
+commit you expect, the deployment you are testing is not the code you changed.
 
 `missing` lists what is absent in plain words, `unrecognizedEnv` lists `MPESA_*`
 variables nothing reads (with a `didYouMean`), and `environmentInput` /

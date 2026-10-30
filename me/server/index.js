@@ -150,12 +150,19 @@ function ensureLive(res) {
      to re-enter all four values when a single one was missing - or when a typo
      in the variable name meant one never arrived at all. */
   const missing = s.missing.join(', ');
+  const env = mpesa.envPresence();
+  const setButEmpty = env.empty.length
+    ? ` ${env.empty.join(', ')} ${env.empty.length === 1 ? 'is' : 'are'} set but empty.`
+    : '';
   res.status(503).json({
     error: `M-Pesa is not configured: ${missing} ${
       s.missing.length === 1 ? 'is' : 'are'
-    } missing. Set ${s.missing.map((m) => 'MPESA_' + m.replace(/ /g, '_').toUpperCase()).join(', ')} in the environment (check GET /api/health), or save the values in Settings.`,
+    } unusable.${setButEmpty} Set ${s.missing
+      .map((m) => 'MPESA_' + m.replace(/ /g, '_').toUpperCase())
+      .join(', ')} in the environment (check GET /api/health), or save the values in Settings.`,
     missing: s.missing,
     requiredEnv: mpesa.REQUIRED_ENV.map((r) => r.env),
+    env,
     unrecognizedEnv: s.unrecognizedEnv,
   });
   return false;
@@ -223,6 +230,19 @@ function configSource() {
   };
 }
 
+/* Which build is answering, and in which Vercel environment. Without this,
+   "the variables are set" and "the deployment you are hitting" cannot be told
+   apart - and an env change does not reach a deployment that already exists. */
+function deploymentInfo() {
+  return {
+    vercelEnv: process.env.VERCEL_ENV || null,
+    gitCommit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || null,
+    gitBranch: process.env.VERCEL_GIT_COMMIT_REF || null,
+    region: process.env.VERCEL_REGION || null,
+    url: process.env.VERCEL_URL || null,
+  };
+}
+
 app.get('/api/health', (req, res) => {
   const s = mpesa.resolveSettings();
   res.json({
@@ -236,6 +256,9 @@ app.get('/api/health', (req, res) => {
     /* Exactly which names are read, which of them are absent, and which
        MPESA_* variables are being ignored (usually a typo). */
     requiredEnv: mpesa.REQUIRED_ENV.map((r) => r.env),
+    /* Present / empty / absent per name, plus which build is answering. */
+    env: mpesa.envPresence(),
+    deployment: deploymentInfo(),
     unrecognizedEnv: s.unrecognizedEnv,
     environmentInput: s.environmentInput,
     environmentRecognized: s.environmentRecognized,
@@ -278,6 +301,10 @@ app.put('/api/settings', requireAdmin, (req, res) => {
   const b = req.body || {};
   const locked = mpesa.envLockedFields();
   const next = { ...store.settings };
+  /* A field supplied by the environment wins, so a value typed into that field
+     is dropped. Silently returning ok:true made "I saved it, nothing changed"
+     look like a bug in the form - it was the env override. Report it instead. */
+  const ignored = [];
 
   const editable = [
     'environment',
@@ -297,8 +324,12 @@ app.put('/api/settings', requireAdmin, (req, res) => {
   ];
 
   for (const key of editable) {
-    if (locked[key]) continue;
     if (b[key] === undefined) continue;
+    if (locked[key]) {
+      /* Empty strings mean "leave the stored secret alone", not an edit. */
+      if (String(b[key] ?? '').trim() !== '') ignored.push(key);
+      continue;
+    }
     if (key === 'consumerSecret' || key === 'passkey' || key === 'consumerKey') {
       /* an empty string means "leave the stored secret alone" */
       if (b[key] === '' || b[key] === null) continue;
@@ -331,7 +362,16 @@ app.put('/api/settings', requireAdmin, (req, res) => {
   store.setSettings(next);
   store.save();
   mpesa.getAccessToken({ force: true }).catch(() => {});
-  res.json({ ok: true, settings: mpesa.publicSettings() });
+  res.json({
+    ok: true,
+    settings: mpesa.publicSettings(),
+    ignored,
+    ignoredHint: ignored.length
+      ? 'These fields come from environment variables and were not saved: ' +
+        ignored.join(', ') +
+        '. Change the variables on the host instead.'
+      : null,
+  });
 });
 
 app.post('/api/settings/test', requireAdmin, async (req, res) => {

@@ -82,6 +82,31 @@ function editDistance(a, b) {
   return prev[b.length];
 }
 
+/**
+ * Which required names this process can actually see. "Missing" hides three
+ * different problems: the variable is absent, it exists but is empty, or the
+ * deployment predates it. Presence and length only - a value never leaves here.
+ */
+function envPresence() {
+  const required = REQUIRED_ENV.map((r) => r.env);
+  const present = [];
+  const empty = [];
+  const lengths = {};
+  for (const name of required) {
+    if (!(name in process.env)) continue;
+    present.push(name);
+    const raw = String(process.env[name]);
+    lengths[name] = raw.length;
+    if (raw.trim() === '') empty.push(name);
+  }
+  return {
+    present,
+    empty,
+    absent: required.filter((name) => !present.includes(name)),
+    lengths,
+  };
+}
+
 /** MPESA_* variables that nothing reads, with the closest real name. */
 function unrecognisedEnv() {
   return Object.keys(process.env)
@@ -549,4 +574,5 @@ module.exports = {
   verifyCallbacksEnabled,
   maskCallbackUrl,
   REQUIRED_ENV,
+  envPresence,
 };

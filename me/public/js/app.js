@@ -1283,9 +1283,13 @@ async function submitKyc(event) {
       const btn = $('#saveSettingsBtn');
       setBusy(btn, true);
       try {
-        const { settings } = await api('/api/settings', { method: 'PUT', body: settingsPayload() });
+        const { settings, ignored } = await api('/api/settings', { method: 'PUT', body: settingsPayload() });
         state.settings = Object.assign({}, state.settings, settings);
-        toast('Settings saved', 'success');
+        if (ignored && ignored.length) {
+          toast(`Saved, but ${ignored.join(', ')} came from the environment and was not changed`, 'info');
+        } else {
+          toast('Settings saved', 'success');
+        }
         renderMode();
         renderSettings();
       } catch (err) {
