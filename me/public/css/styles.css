@@ -996,3 +996,56 @@ details.raw pre {
 .row-icon.valid { background: rgba(34, 197, 94, 0.16); color: #6ee7a0; }
 .row-icon.invalid,
 .row-icon.error { background: rgba(248, 113, 113, 0.14); color: #ffa1a1; }
+
+/* ------------------------------------------------------------------ auth gate */
+.gate {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px 18px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: radial-gradient(120% 80% at 50% 0%, #08301d 0%, var(--bg) 55%);
+  overflow-y: auto;
+}
+.gate-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px 20px;
+  display: grid;
+  gap: 14px;
+}
+.gate-brand { display: flex; align-items: center; gap: 8px; color: var(--green-bright); font-size: 13px; letter-spacing: .02em; }
+.gate-card h1 { margin: 0; font-size: 21px; }
+.gate-sub { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.gate-alt { margin: 2px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+.gate-alt a { color: var(--green-bright); }
+.gate-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.gate-warn { color: var(--amber); font-weight: 600; margin: 0 0 6px; }
+.gate-verify { font-size: 13.5px; line-height: 1.6; color: var(--text); display: grid; gap: 8px; }
+.gate-verify ul { margin: 0; padding-left: 18px; color: var(--muted); }
+
+.type-list { display: grid; gap: 8px; }
+.type-card {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: grid;
+  gap: 3px;
+  cursor: pointer;
+}
+.type-card strong { font-size: 14px; font-weight: 600; }
+.type-card span { font-size: 12px; color: var(--muted); }
+.type-card.is-active { border-color: var(--green); background: rgba(34, 197, 94, 0.12); }
+
+.code-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; padding: 0; list-style: none; counter-reset: c; }
+.code-list li { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; }
+.code-list code { font-size: 13px; letter-spacing: .04em; color: var(--green-bright); }
+body.gate-open { overflow: hidden; }

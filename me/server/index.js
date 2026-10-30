@@ -12,6 +12,7 @@ const mpesa = require('./mpesa');
 const endpoints = require('./endpoints');
 const b2b = require('./b2b');
 const kyc = require('./kyc');
+const auth = require('./auth');
 
 store.load();
 
@@ -242,6 +243,280 @@ function deploymentInfo() {
     url: process.env.VERCEL_URL || null,
   };
 }
+
+
+/* ------------------------------------------------------------------ identity */
+/* Order matters: this gate is registered before every owner route, so a route
+   added later is protected by default rather than by remembering to guard it.
+   Public surfaces (payer links, Safaricom callbacks) are allowlisted by path.
+   Bootstrap rule: with no accounts on the install there is nothing to protect,
+   so the app stays open until the first owner registers. */
+/* Mounted at /api, so req.path is the path *after* the mount point. */
+const PUBLIC_API_PATHS = [
+  /^\/auth\//,
+  /^\/public\//,
+  /^\/health$/,
+  /^\/mpesa\/callback/,
+  /^\/mpesa\/timeout/,
+  /^\/b2b\/callback/,
+  /^\/b2b\/timeout/,
+];
+
+function adminPinMatches(req) {
+  const pin = (process.env.ADMIN_PIN || '').trim();
+  if (!pin) return false;
+  const supplied = String(req.get('x-admin-pin') || '') || String(req.body?.adminPin || '');
+  if (!supplied || supplied.length !== pin.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(pin));
+}
+
+app.use('/api', (req, res, next) => {
+  const isPublic = PUBLIC_API_PATHS.some((re) => re.test(req.path));
+
+  /* Resolve the session first, for every request. Public endpoints ignore it,
+     but /api/auth/* needs it: those handlers are public to *reach* and
+     authenticated to *use*, so returning early here left them anonymous. */
+  const resolved = auth.resolveSession(req);
+  if (resolved) {
+    req.auth = resolved;
+    return next();
+  }
+  if (isPublic) return next();
+  if (store.users.length === 0) return next();
+  if (adminPinMatches(req)) {
+    req.auth = { user: null, adminPin: true };
+    return next();
+  }
+  return res.status(401).json({ error: 'Sign in to continue.', loginRequired: true });
+});
+
+function authPayload(req, user) {
+  const session = req.auth?.session || null;
+  return {
+    user: auth.publicUser(user),
+    accountTypes: Object.entries(auth.ACCOUNT_TYPES).map(([id, meta]) => ({
+      id,
+      label: meta.label,
+      sevenDigitCode: meta.sevenDigitCode,
+      note: meta.note,
+    })),
+    session: session
+      ? { expiresAt: session.expiresAt, idleDays: Math.round(auth.SESSION_TTL_MS / 86400000) }
+      : null,
+    devices: auth.listDevices(user.id).map((d) => ({
+      id: d.id,
+      label: d.label,
+      firstSeenAt: d.firstSeenAt,
+      lastSeenAt: d.lastSeenAt,
+      current: session ? d.id === session.deviceId : false,
+    })),
+    installOpen: store.users.length === 0,
+  };
+}
+
+app.get('/api/auth/config', (req, res) => {
+  res.json({
+    hasAccounts: store.users.length > 0,
+    accountTypes: Object.entries(auth.ACCOUNT_TYPES).map(([id, meta]) => ({
+      id,
+      label: meta.label,
+      sevenDigitCode: meta.sevenDigitCode,
+      note: meta.note,
+    })),
+  });
+});
+
+app.post('/api/auth/register', (req, res) => {
+  try {
+    const user = auth.register(req.body || {});
+    const deviceKey = auth.deviceFromRequest(req) || auth.newId();
+    const device = auth.trustDevice(user, deviceKey, req);
+    const { token } = auth.createSession(user, device.id, req);
+    res.setHeader('Set-Cookie', [
+      auth.cookieString(auth.SESSION_COOKIE, token, { maxAge: auth.SESSION_TTL_MS }),
+      auth.cookieString(auth.DEVICE_COOKIE, device.id, { maxAge: auth.SESSION_TTL_MS }),
+    ]);
+    req.auth = { user };
+    res.status(201).json(authPayload(req, user));
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { email, password, pin } = req.body || {};
+  const user = auth.findUserByEmail(email);
+  /* Same answer for "no such user" and "wrong password": no account oracle. */
+  if (!user || !auth.verifySecret(password, user.password)) {
+    return res.status(401).json({ error: 'Email or password is not correct.' });
+  }
+
+  const deviceKey = auth.deviceFromRequest(req);
+  const knownDevice = deviceKey
+    ? auth.listDevices(user.id).some((d) => d.id === deviceKey)
+    : false;
+
+  /* New device: prove it is the owner before letting it in. */
+  if (user.pin && !knownDevice) {
+    if (!pin) {
+      return res.status(401).json({
+        error: 'This is a new device. Enter your security PIN to continue.',
+        needsPin: true,
+      });
+    }
+    try {
+      auth.verifyPin(user, pin);
+    } catch (err) {
+      return res.status(err.status || 401).json({ error: err.message, needsPin: true });
+    }
+  }
+
+  const device = auth.trustDevice(user, deviceKey || auth.newId(), req);
+  const { token } = auth.createSession(user, device.id, req);
+  res.setHeader('Set-Cookie', [
+    auth.cookieString(auth.SESSION_COOKIE, token, { maxAge: auth.SESSION_TTL_MS }),
+    auth.cookieString(auth.DEVICE_COOKIE, device.id, { maxAge: auth.SESSION_TTL_MS }),
+  ]);
+  req.auth = { user };
+  res.json(authPayload(req, user));
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) {
+    return res.status(401).json({ error: 'Not signed in.', loginRequired: true, hasAccounts: store.users.length > 0 });
+  }
+  res.json(authPayload(req, user));
+});
+
+app.put('/api/auth/profile', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  try {
+    auth.updateProfile(user, req.body || {});
+    res.json(authPayload(req, user));
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+app.put('/api/auth/account', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  try {
+    auth.setAccount(user, req.body || {});
+    res.json(authPayload(req, user));
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+/* Honest capability endpoint: it never claims a code was sent. */
+app.post('/api/auth/verification/start', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!user.account) return res.status(400).json({ error: 'Choose an account type first.' });
+  const meta = auth.ACCOUNT_TYPES[user.account.type];
+  user.account.verification = {
+    status: 'unsupported',
+    method: null,
+    sevenDigitCodeSupported: Boolean(meta.sevenDigitCode),
+    reason: `${meta.label}: ${meta.note}`,
+    checkedAt: new Date().toISOString(),
+  };
+  store.save();
+  res.status(200).json({
+    sent: false,
+    sevenDigitCodeSupported: Boolean(meta.sevenDigitCode),
+    reason: user.account.verification.reason,
+    nextSteps: meta.kyc
+      ? ['KYC validateID (Safaricom) - checks the ID belongs to the MSISDN holder']
+      : ['Confirm the shortcode with a Safaricom account-balance query once initiator credentials are set'],
+  });
+});
+
+app.post('/api/auth/pin', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  try {
+    if (user.pin) return res.status(409).json({ error: 'A PIN already exists. Change it instead.' });
+    auth.setPin(user, req.body?.pin);
+    const codes = auth.issueRecoveryCodes(user);
+    res.status(201).json({ ok: true, recoveryCodes: codes, user: auth.publicUser(user) });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/pin/change', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  try {
+    auth.verifyPin(user, req.body?.currentPin);
+    auth.setPin(user, req.body?.newPin);
+    auth.issueRecoveryCodes(user);
+    auth.revokeAllSessions(user.id);
+    res.json({ ok: true, signedOutEverywhere: true });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const authd = req.auth;
+  if (!authd?.user) return res.status(401).json({ error: 'Sign in to continue.' });
+  try {
+    /* Logging out is a sensitive action: it needs the PIN, not just a session. */
+    auth.verifyPin(authd.user, req.body?.pin);
+    auth.revokeSession(authd.session.id);
+    res.setHeader('Set-Cookie', [
+      auth.cookieString(auth.SESSION_COOKIE, '', { maxAge: 0 }),
+    ]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/devices', (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return res.status(401).json({ error: 'Sign in to continue.' });
+  res.json(authPayload(req, user).devices);
+});
+
+app.delete('/api/auth/devices/:id', (req, res) => {
+  const authd = req.auth;
+  if (!authd?.user) return res.status(401).json({ error: 'Sign in to continue.' });
+  try {
+    auth.verifyPin(authd.user, req.body?.pin);
+    auth.revokeDevice(authd.user.id, req.params.id);
+    res.json({ ok: true, devices: authPayload(req, authd.user).devices });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+/* Recovery: a one-time code issued when the PIN was created. No email is sent,
+   because no mail transport is configured - and none is faked here. */
+app.post('/api/auth/recover', (req, res) => {
+  const { email, code, password, pin } = req.body || {};
+  const user = auth.findUserByEmail(email);
+  if (!user || !auth.useRecoveryCode(user, code)) {
+    return res.status(401).json({ error: 'That recovery code is not valid or was already used.' });
+  }
+  try {
+    if (password) {
+      if (String(password).length < 8) throw Object.assign(new Error('Use a password of at least 8 characters.'), { status: 400 });
+      user.password = auth.hashSecret(password);
+    }
+    auth.setPin(user, pin);
+    const codes = auth.issueRecoveryCodes(user);
+    auth.revokeAllSessions(user.id);
+    res.json({ ok: true, recoveryCodes: codes, message: 'PIN reset. Sign in again with your new details.' });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
 
 app.get('/api/health', (req, res) => {
   const s = mpesa.resolveSettings();

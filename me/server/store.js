@@ -28,6 +28,11 @@ const EMPTY = () => ({
   payments: [],
   b2b: [],
   kyc: [],
+  /* Identity. Added alongside the payment collections so an existing db.json
+     keeps working: missing arrays simply start empty. */
+  users: [],
+  sessions: [],
+  devices: [],
   createdAt: new Date().toISOString(),
 });
 
@@ -48,6 +53,9 @@ function load() {
       payments: Array.isArray(parsed.payments) ? parsed.payments : [],
       b2b: Array.isArray(parsed.b2b) ? parsed.b2b : [],
       kyc: Array.isArray(parsed.kyc) ? parsed.kyc : [],
+      users: Array.isArray(parsed.users) ? parsed.users : [],
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+      devices: Array.isArray(parsed.devices) ? parsed.devices : [],
       createdAt: parsed.createdAt || new Date().toISOString(),
     };
   } catch (err) {
@@ -106,6 +114,15 @@ module.exports = {
   },
   get settings() {
     return db.settings;
+  },
+  get users() {
+    return db.users;
+  },
+  get sessions() {
+    return db.sessions;
+  },
+  get devices() {
+    return db.devices;
   },
   setSettings(next) {
     db.settings = next && typeof next === 'object' ? next : {};

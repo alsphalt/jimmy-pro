@@ -1388,6 +1388,18 @@ async function submitKyc(event) {
   /* ------------------------------------------------------------------- boot */
 
   async function boot() {
+    /* Nothing loads until identity resolves: an unauthenticated visitor gets the
+       gate, and the dashboard never renders with half-fetched data. */
+    if (window.JimmyAuth) {
+      let ok = false;
+      try {
+        ok = await window.JimmyAuth.ensure();
+      } catch (_) {
+        ok = false;
+      }
+      if (!ok) return;
+    }
+
     wire();
     initInstall();
     setView(currentView());
