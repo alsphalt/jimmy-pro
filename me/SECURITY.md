@@ -74,3 +74,34 @@ process" stop looking the same.
 Saving credentials through the Settings screen also works, but on hosts with an
 ephemeral filesystem that data disappears on the next deploy; environment
 variables are the durable path.
+
+## 3. Nobody authenticates a callback for you
+
+`POST /api/mpesa/callback` sits on a public URL, because Safaricom has to reach
+it. Anything public can be posted to, so the app treats the body as a claim, not
+as proof. Two independent defences, both on by default:
+
+**Token in the path.** Set `MPESA_CALLBACK_SECRET` and every callback, B2B result
+and timeout URL the app generates carries it as a path segment
+(`…/api/mpesa/callback/<token>`). A POST to the bare path answers `404` and
+touches nothing. The token never appears in the UI, `/api/settings` or the
+database — only in the URL handed to Daraja. Rotate it by changing the variable
+and redeploying; the next STK push carries the new URL.
+
+**Success is verified, not trusted.** A callback that reports `ResultCode 0` is
+confirmed with an STK status query before the payment is booked:
+
+| Daraja says | Result |
+|---|---|
+| success | booked, `verification.query = 0` |
+| cancelled / failed / timeout | **not** booked as income; `suspicious: true`, reason recorded |
+| unreachable / still processing | stays `pending` with `needsVerification: true` |
+
+A failure code needs no confirmation and is applied immediately — nobody forges
+a callback to record that they were *not* paid. `VERIFY_CALLBACKS=off` restores
+blind trust; both states are reported by `GET /api/health` under `callbacks`.
+
+Neither defence replaces real authentication on the API itself: `/api/payments`,
+the CSV export and the settings screen are still open to anyone who can reach the
+host. Put a reverse proxy auth or the built-in `ADMIN_PIN` in front of them
+before exposing the app to the internet.

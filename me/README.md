@@ -199,8 +199,8 @@ deliberate single-shot action.
 | `DELETE` | `/api/payments/:id` | Delete record |
 | `GET` | `/api/stats` | Totals, success rate, 7-day series |
 | `GET` | `/api/events` | SSE: `payment`, `payment_deleted` |
-| `POST` | `/api/mpesa/callback` | Safaricom STK result |
-| `POST` | `/api/mpesa/timeout` | Queue timeout |
+| `POST` | `/api/mpesa/callback/:token?` | Safaricom STK result (token required when `MPESA_CALLBACK_SECRET` is set) |
+| `POST` | `/api/mpesa/timeout/:token?` | Queue timeout |
 | `GET` | `/api/public/pay/:ref` | Public link data |
 | `POST` | `/api/public/pay/:ref/prompt` | Payer sends themselves the prompt (rate-limited) |
 | `GET` | `/api/export.csv` | CSV export |
@@ -208,8 +208,8 @@ deliberate single-shot action.
 | `POST` | `/api/b2b/payments` | Send a B2B payment |
 | `GET` | `/api/b2b/payments` | B2B history |
 | `DELETE` | `/api/b2b/payments/:id` | Delete a B2B record |
-| `POST` | `/api/b2b/callback` | Async B2B result from Safaricom |
-| `POST` | `/api/b2b/timeout` | B2B queue timeout |
+| `POST` | `/api/b2b/callback/:token?` | Async B2B result from Safaricom |
+| `POST` | `/api/b2b/timeout/:token?` | B2B queue timeout |
 | `POST` | `/api/kyc/validate` | Validate an ID against an MSISDN |
 | `GET` | `/api/kyc/checks` | KYC history |
 | `DELETE` | `/api/kyc/checks/:id` | Delete a KYC record |
@@ -259,6 +259,7 @@ Service worker caches the shell only; every `/api/` call bypasses the cache so b
 
 - Serve over **https** (Safaricom rejects plain http callbacks).
 - Set `ADMIN_PIN` so nobody else can change your shortcode through the UI. The app sends it as `x-admin-pin` and remembers it in the browser.
+- Set `MPESA_CALLBACK_SECRET` so a callback has to prove it came from the URL you handed Daraja, and leave `VERIFY_CALLBACKS` on: a "success" is confirmed with a status query before it counts. See `SECURITY.md` §3.
 - Put the app behind your own auth if it is publicly reachable — this build ships without user accounts on purpose.
 - `server/data/db.json` is the database. Back it up; swap `store.js` for Postgres when you outgrow it.
 - Go-live on Daraja requires a production passkey and an approved shortcode.

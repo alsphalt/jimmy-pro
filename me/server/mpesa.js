@@ -10,11 +10,7 @@
  * Plus the callback shape for STK results.
  */
 const store = require('./store');
-
-const BASES = {
-  sandbox: 'https://sandbox.safaricom.co.ke',
-  production: 'https://api.safaricom.co.ke',
-};
+const endpoints = require('./endpoints');
 
 const SANDBOX_PASSKEY =
   'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919';
@@ -42,8 +38,18 @@ function resolveSettings() {
       ? 'production'
       : 'sandbox';
 
+  /* Callbacks are public URLs, so a secret in the path is the only thing that
+     distinguishes a real Safaricom POST from anyone else who can reach the host.
+     Deriving it here means the operator sets one variable and every generated
+     callback/result URL carries the token automatically. */
+  const callbackSecret = String(pick('MPESA_CALLBACK_SECRET', 'callbackSecret'));
+  const publicUrl = String(process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  const derived = (pathname) =>
+    publicUrl ? `${publicUrl}${pathname}${callbackSecret ? `/${encodeURIComponent(callbackSecret)}` : ''}` : '';
+
   const settings = {
     environment,
+    callbackSecret,
     consumerKey: String(pick('MPESA_CONSUMER_KEY', 'consumerKey')),
     consumerSecret: String(pick('MPESA_CONSUMER_SECRET', 'consumerSecret')),
     passkey: String(pick('MPESA_PASSKEY', 'passkey')),
@@ -56,10 +62,7 @@ function resolveSettings() {
     /* PUBLIC_URL alone is enough: derive the callback from it before giving up,
        so a host only has to set one public-address variable. */
     callbackUrl: String(
-      pick('MPESA_CALLBACK_URL', 'callbackUrl') ||
-        (process.env.PUBLIC_URL
-          ? `${String(process.env.PUBLIC_URL).trim().replace(/\/+$/, '')}/api/mpesa/callback`
-          : '')
+      pick('MPESA_CALLBACK_URL', 'callbackUrl') || derived('/api/mpesa/callback')
     ),
     businessName: String(pick('BUSINESS_NAME', 'businessName', 'Jimmy Pro')),
 
@@ -70,8 +73,8 @@ function resolveSettings() {
         pick('MPESA_SHORTCODE', 'shortcode', environment === 'sandbox' ? '174379' : '')
     ),
     b2bCommandId: String(pick('MPESA_B2B_COMMAND_ID', 'b2bCommandId', 'BusinessPayBill')),
-    resultUrl: String(pick('MPESA_RESULT_URL', 'resultUrl')),
-    timeoutUrl: String(pick('MPESA_TIMEOUT_URL', 'timeoutUrl')),
+    resultUrl: String(pick('MPESA_RESULT_URL', 'resultUrl') || derived('/api/b2b/callback')),
+    timeoutUrl: String(pick('MPESA_TIMEOUT_URL', 'timeoutUrl') || derived('/api/b2b/timeout')),
 
     /* KYC validation */
     kycShortcode: String(
@@ -94,8 +97,22 @@ function resolveSettings() {
 
   /* No simulation fallback: without credentials every money endpoint refuses. */
   settings.live = settings.hasCredentials;
-  settings.baseUrl = BASES[settings.environment];
+  /* One source of truth for every Daraja URL: endpoints.js also honours
+     MPESA_BASE_URL, which this file used to ignore, so STK calls could never be
+     pointed at a proxy or a local stub even though B2B and KYC could. */
+  settings.baseUrl = endpoints.baseUrl(settings.environment);
   return settings;
+}
+
+/**
+ * The callback token is the credential, so it must never be echoed back by an
+ * endpoint the public can read. Operators know their own secret; nothing in the
+ * app needs to display it.
+ */
+function maskCallbackUrl(url) {
+  const secret = String((resolveSettings().callbackSecret || ''));
+  if (!secret || !url) return url || '';
+  return String(url).split(`/${encodeURIComponent(secret)}`).join('/<token hidden>');
 }
 
 function publicSettings() {
@@ -104,7 +121,7 @@ function publicSettings() {
     environment: s.environment,
     shortcode: s.shortcode,
     transactionType: s.transactionType,
-    callbackUrl: s.callbackUrl,
+    callbackUrl: maskCallbackUrl(s.callbackUrl),
     businessName: s.businessName,
     live: s.live,
     missing: s.missing,
@@ -112,8 +129,8 @@ function publicSettings() {
     initiatorName: s.initiatorName,
     senderShortcode: s.senderShortcode,
     b2bCommandId: s.b2bCommandId,
-    resultUrl: s.resultUrl,
-    timeoutUrl: s.timeoutUrl,
+    resultUrl: maskCallbackUrl(s.resultUrl),
+    timeoutUrl: maskCallbackUrl(s.timeoutUrl),
     kycShortcode: s.kycShortcode,
     hasSecurityCredential: Boolean(
       (process.env.MPESA_SECURITY_CREDENTIAL || '').trim() ||
@@ -129,7 +146,19 @@ function publicSettings() {
        a real passkey exists. Production passkeys are never returned. */
     sandboxPasskeyHint:
       s.environment !== 'production' && !s.passkey ? SANDBOX_PASSKEY : null,
+    callbackTokenRequired: Boolean(s.callbackSecret),
+    verifyCallbacks: verifyCallbacksEnabled(),
   };
+}
+
+/**
+ * A success callback is a claim, not proof: it arrives on a public URL from any
+ * caller. Unless it is switched off, every "success" is confirmed with a status
+ * query before it is booked as money received.
+ */
+function verifyCallbacksEnabled() {
+  const v = String(process.env.VERIFY_CALLBACKS || '').trim().toLowerCase();
+  return !(v === 'off' || v === '0' || v === 'false');
 }
 
 /** Fields supplied through .env cannot be edited from the UI. */
@@ -438,4 +467,6 @@ module.exports = {
   parseStkCallback,
   resultMessage,
   mapStatus,
+  verifyCallbacksEnabled,
+  maskCallbackUrl,
 };
