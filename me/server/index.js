@@ -18,7 +18,7 @@ store.load();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
-const PAYMENT_TTL_MS = 30 * 60 * 1000;
+const PAYMENT_TTL_MS = Number(process.env.PAYMENT_TTL_MS) || 30 * 60 * 1000;
 
 app.disable('x-powered-by');
 app.set('trust proxy', true);
@@ -129,6 +129,22 @@ function ensureLive(res) {
     missing: s.missing,
   });
   return false;
+}
+
+/* One live prompt per payment at a time. A second push overwrites
+   checkoutRequestId/merchantRequestId, which orphans the first prompt: if the
+   customer then pays the *first* prompt, its callback matches nothing and a
+   settled payment stays "pending" forever. */
+const PUSH_GRACE_MS = 90 * 1000;
+
+function pushInFlight(payment) {
+  if (payment.status !== 'pending' || !payment.checkoutRequestId) return false;
+  const last = new Date(payment.lastPushAt || payment.updatedAt || payment.createdAt).getTime();
+  return Number.isFinite(last) && Date.now() - last < PUSH_GRACE_MS;
+}
+
+function isExpired(payment) {
+  return Date.now() - new Date(payment.createdAt).getTime() > PAYMENT_TTL_MS;
 }
 
 /* --------------------------------------------------------------- SSE stream */
@@ -834,9 +850,18 @@ app.delete('/api/kyc/checks/:id', (req, res) => {
 /* ---------------------------------------------------------------- public pay */
 
 const promptHits = new Map();
+/* Public endpoint: one entry per source IP, forever, would grow without bound. */
+function prunePromptHits(now) {
+  if (promptHits.size < 500) return;
+  for (const [key, hits] of promptHits) {
+    if (!hits.some((t) => now - t < 60000)) promptHits.delete(key);
+  }
+}
+
 function rateLimit(req, res, next) {
   const key = req.ip || 'anon';
   const now = Date.now();
+  prunePromptHits(now);
   const bucket = (promptHits.get(key) || []).filter((t) => now - t < 60000);
   if (bucket.length >= 6) {
     return res.status(429).json({ error: 'Too many attempts. Please wait a minute and try again.' });
@@ -872,23 +897,43 @@ app.post('/api/public/pay/:ref/prompt', rateLimit, async (req, res) => {
   if (payment.status !== 'pending') {
     return res.status(409).json({ error: `This request is already ${payment.status}.` });
   }
-  const s = mpesa.resolveSettings();
+  /* The payer page hides the button once expired; enforce it here too, or a
+     direct POST keeps prompting real phones from a dead link. */
+  if (isExpired(payment)) {
+    return res.status(410).json({
+      error: 'This payment request has expired. Ask the owner for a new link.',
+      expired: true,
+    });
+  }
+  if (pushInFlight(payment)) {
+    return res.status(409).json({
+      error: 'A prompt is already on its way to that phone. Wait for it to arrive.',
+      pendingPrompt: true,
+    });
+  }
   const phone = mpesa.normalizePhone(req.body?.phone);
   if (!phone) {
     return res.status(400).json({ error: 'Enter a valid Safaricom number, e.g. 0712 345 678.' });
   }
-  payment.payerPhone = phone;
 
   try {
     const push = await mpesa.stkPush({ ...payment, phone });
+    payment.payerPhone = phone;
     payment.checkoutRequestId = push.checkoutRequestId;
     payment.merchantRequestId = push.merchantRequestId;
+    payment.lastPushAt = new Date().toISOString();
     payment.attempts = (payment.attempts || 0) + 1;
     payment.history.push({ at: new Date().toISOString(), event: 'stk_push_sent', detail: phone });
     store.save();
     broadcast('payment', { payment });
     return res.json({ ok: true, message: push.customerMessage || 'Prompt sent to your phone.' });
   } catch (err) {
+    /* Keep the attempt visible to the owner: the link stays reusable, but the
+       failed try (and the number it targeted) is part of the record. */
+    payment.history.push({ at: new Date().toISOString(), event: 'stk_push_failed', detail: `${phone}: ${err.message}` });
+    payment.updatedAt = new Date().toISOString();
+    store.save();
+    broadcast('payment', { payment });
     return res.status(502).json({ error: err.message });
   }
 });
@@ -919,6 +964,16 @@ app.post('/api/mpesa/callback', (req, res) => {
   }
   if (payment.status !== 'pending') return;
 
+  /* Safaricom echoes the settled amount. Keep the record if it differs from
+     what we asked for - that is a reconciliation signal, not a silent detail. */
+  const settledAmount = parsed.amount == null ? null : Number(parsed.amount);
+  if (Number.isFinite(settledAmount) && settledAmount !== Number(payment.amount)) {
+    payment.amountMismatch = { expected: Number(payment.amount), settled: settledAmount };
+    console.warn(
+      `[callback] ${payment.ref} amount mismatch: asked ${payment.amount}, settled ${settledAmount}`
+    );
+  }
+
   applyOutcome(payment, {
     status: mpesa.mapStatus(parsed.resultCode),
     resultCode: parsed.resultCode,
@@ -930,6 +985,7 @@ app.post('/api/mpesa/callback', (req, res) => {
     at: new Date().toISOString(),
     event: 'callback',
     detail: parsed.resultDesc,
+    ...(payment.amountMismatch ? { amountMismatch: payment.amountMismatch } : {}),
   });
   store.save();
   console.log(`[callback] ${payment.ref} -> ${payment.status}`);
