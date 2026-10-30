@@ -146,10 +146,17 @@ function callbackGuard(req, res, next) {
 function ensureLive(res) {
   const s = mpesa.resolveSettings();
   if (s.live) return true;
+  /* Name what is actually absent. The generic "not configured" line sent people
+     to re-enter all four values when a single one was missing - or when a typo
+     in the variable name meant one never arrived at all. */
+  const missing = s.missing.join(', ');
   res.status(503).json({
-    error:
-      'M-Pesa is not configured. Save your consumer key, secret, passkey and shortcode in Settings first.',
+    error: `M-Pesa is not configured: ${missing} ${
+      s.missing.length === 1 ? 'is' : 'are'
+    } missing. Set ${s.missing.map((m) => 'MPESA_' + m.replace(/ /g, '_').toUpperCase()).join(', ')} in the environment (check GET /api/health), or save the values in Settings.`,
     missing: s.missing,
+    requiredEnv: mpesa.REQUIRED_ENV.map((r) => r.env),
+    unrecognizedEnv: s.unrecognizedEnv,
   });
   return false;
 }
@@ -226,6 +233,12 @@ app.get('/api/health', (req, res) => {
     environment: s.environment,
     missing: s.missing,
     config: configSource(),
+    /* Exactly which names are read, which of them are absent, and which
+       MPESA_* variables are being ignored (usually a typo). */
+    requiredEnv: mpesa.REQUIRED_ENV.map((r) => r.env),
+    unrecognizedEnv: s.unrecognizedEnv,
+    environmentInput: s.environmentInput,
+    environmentRecognized: s.environmentRecognized,
     callbackUrlSet: Boolean(s.callbackUrl),
     /* How callbacks are trusted: a token we generated, and a status query before
        any "success" is booked. Self-reported so a live host can be audited. */
@@ -1164,6 +1177,18 @@ function printBanner() {
   console.log(`  Callback: ${s.callbackUrl || '(not set)'}`);
   console.log(`  Data:     ${store.filePath || '(default)'}`);
   if (s.ownerMsisdn) console.log(`  Owner:    ${s.ownerMsisdn}`);
+  if (!s.environmentRecognized) {
+    console.log(`  Warning:  MPESA_ENV="${s.environmentInput}" is not recognised - using sandbox.`);
+    console.log('            Use MPESA_ENV=sandbox or MPESA_ENV=production.');
+  }
+  if (s.unrecognizedEnv.length) {
+    for (const item of s.unrecognizedEnv) {
+      console.log(
+        `  Warning:  ${item.key} is set but never read` +
+          (item.didYouMean ? ` - did you mean ${item.didYouMean}?` : '.')
+      );
+    }
+  }
   if (!s.callbackSecret && s.live) {
     console.log('  Warning:  no MPESA_CALLBACK_SECRET - anyone who can reach this host');
     console.log('            can POST a fake "success" to the callback URL.');
@@ -1178,37 +1203,52 @@ function printBanner() {
 /* `node --watch` restarts by spawning a new process before the old listener is
    fully closed, which surfaces as EADDRINUSE on :3000. Retry briefly instead of
    crashing with a stack trace, and only give up if the port is genuinely taken. */
-let listenTries = 0;
-const server = app.listen(PORT, printBanner);
+/* Binding a port is a local/server thing, not part of building the app: Vercel
+   imports this module and calls it per request, and calling listen() there would
+   either throw or leave a half-open listener. So the app is exported as-is and
+   the listener is opt-in. */
+function startServer() {
+  let listenTries = 0;
+  const server = app.listen(PORT, printBanner);
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE' && listenTries < 12) {
-    listenTries += 1;
-    if (listenTries === 1) {
-      console.log(`  Port ${PORT} is still held by the previous process - retrying...`);
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && listenTries < 12) {
+      listenTries += 1;
+      if (listenTries === 1) {
+        console.log(`  Port ${PORT} is still held by the previous process - retrying...`);
+      }
+      setTimeout(() => server.listen(PORT), 250);
+      return;
     }
-    setTimeout(() => server.listen(PORT), 250);
-    return;
-  }
-  if (err.code === 'EADDRINUSE') {
-    console.error(
-      `\n  Port ${PORT} is already in use by another process.\n` +
-        `  Stop it (lsof -i :${PORT} , then kill <pid>) or start on another port:\n` +
-        `    PORT=3001 npm start\n`
-    );
-    process.exit(1);
-  }
-  throw err;
-});
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `\n  Port ${PORT} is already in use by another process.\n` +
+          `  Stop it (lsof -i :${PORT} , then kill <pid>) or start on another port:\n` +
+          `    PORT=3001 npm start\n`
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
 
-function shutdown() {
-  try {
-    store.flush();
-  } catch (_) {
-    /* noop */
+  function shutdown() {
+    try {
+      store.flush();
+    } catch (_) {
+      /* noop */
+    }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1500).unref();
   }
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1500).unref();
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  return server;
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+
+module.exports = app;
+module.exports.startServer = startServer;
+
+/* `npm start` still runs this file directly and binds the port; `require()` from
+   a serverless entry gets the app without side effects. */
+if (require.main === module) startServer();

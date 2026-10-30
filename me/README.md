@@ -57,6 +57,28 @@ BUSINESS_NAME=Jimmy Pro
 
 `.env` always wins over values saved in the UI. Save settings then press **Test connection** — it fetches a real OAuth token and tells you if Safaricom accepted the credentials.
 
+### The four that are actually required
+
+| Variable | Needed for |
+| --- | --- |
+| `MPESA_CONSUMER_KEY` | every call |
+| `MPESA_CONSUMER_SECRET` | every call |
+| `MPESA_PASSKEY` | STK prompts — **no default, not even in sandbox** |
+| `MPESA_SHORTCODE` | defaults to `174379` in sandbox; **required in production** |
+
+Names are exact. `MPESA_PASS_KEY`, `MPESA_SHORT_CODE`, `MPESA_CONSUMERKEY` and
+friends are *not* read, and a stray name fails silently — the app just says "not
+configured". `GET /api/health` is the source of truth:
+
+```bash
+curl -s https://your-host/api/health | jq '{mode, missing, requiredEnv, unrecognizedEnv, environmentInput, environmentRecognized}'
+```
+
+`missing` lists what is absent in plain words, `unrecognizedEnv` lists `MPESA_*`
+variables nothing reads (with a `didYouMean`), and `environmentInput` /
+`environmentRecognized` catch a typo like `MPESA_ENV=prod`, which otherwise falls
+back to sandbox without complaint.
+
 ## 3. Make the callback reachable
 
 Safaricom must POST the result to a public **https** URL.
@@ -278,5 +300,7 @@ Service worker caches the shell only; every `/api/` call bypasses the cache so b
 | Works locally, not on a phone | Callback URL must be public https — use ngrok |
 | `SecurityCredential is missing` | Set `MPESA_INITIATOR_PASSWORD` and drop the certificate in `certs/` |
 | `Initiator name is missing` | Set `MPESA_INITIATOR_NAME` to your Daraja API operator username |
+| Says *not configured* but the variables look set | Read `missing` and `unrecognizedEnv` in `GET /api/health`: either `MPESA_PASSKEY` is absent, or the name is misspelt |
+| Vercel: variables set, deploy still says *not configured* | Check each variable is enabled for the **Production** scope, then **redeploy** — Vercel bakes env into a deployment, so an existing build keeps the old set |
 | B2B stays *pending* | Safaricom never posted the result — check `MPESA_RESULT_URL` is public |
 | KYC returns `invalid` | The ID and number do not match, or the product is not enabled on your app |

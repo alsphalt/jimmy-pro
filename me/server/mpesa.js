@@ -24,6 +24,79 @@ function envOr(key, fallback) {
   return trimmed === '' ? fallback : trimmed;
 }
 
+/* Every environment variable this config reads. A typo like MPESA_PASS_KEY is
+   indistinguishable from "not set" at runtime, so anything that looks like one
+   of ours but is not on this list gets reported as a near-miss instead of
+   leaving the operator with a bare "not configured". */
+const RECOGNISED_ENV = new Set([
+  'ADMIN_PIN',
+  'BUSINESS_NAME',
+  'DATA_DIR',
+  'PAYMENT_TTL_MS',
+  'PORT',
+  'PUBLIC_URL',
+  'TZ',
+  'VERIFY_CALLBACKS',
+  'MPESA_BASE_URL',
+  'MPESA_B2B_COMMAND_ID',
+  'MPESA_B2B_PARTY_A',
+  'MPESA_CALLBACK_SECRET',
+  'MPESA_CALLBACK_URL',
+  'MPESA_CERT_PATH',
+  'MPESA_CERT_PEM',
+  'MPESA_CONSUMER_KEY',
+  'MPESA_CONSUMER_SECRET',
+  'MPESA_ENV',
+  'MPESA_INITIATOR_NAME',
+  'MPESA_INITIATOR_PASSWORD',
+  'MPESA_KYC_SHORTCODE',
+  'MPESA_OWNER_MSISDN',
+  'MPESA_PASSKEY',
+  'MPESA_RESULT_URL',
+  'MPESA_SECURITY_CREDENTIAL',
+  'MPESA_SHORTCODE',
+  'MPESA_TIMEOUT_URL',
+  'MPESA_TRANSACTION_TYPE',
+]);
+
+/* The four without which no STK push can be sent. Shortcode only has a default
+   in sandbox; production must set it. */
+const REQUIRED_ENV = [
+  { env: 'MPESA_CONSUMER_KEY', label: 'consumer key' },
+  { env: 'MPESA_CONSUMER_SECRET', label: 'consumer secret' },
+  { env: 'MPESA_PASSKEY', label: 'passkey' },
+  { env: 'MPESA_SHORTCODE', label: 'shortcode' },
+];
+
+function editDistance(a, b) {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const above = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return prev[b.length];
+}
+
+/** MPESA_* variables that nothing reads, with the closest real name. */
+function unrecognisedEnv() {
+  return Object.keys(process.env)
+    .filter((key) => /^MPESA_/i.test(key) && !RECOGNISED_ENV.has(key.toUpperCase()))
+    .sort()
+    .map((key) => {
+      let best = null;
+      for (const candidate of RECOGNISED_ENV) {
+        const d = editDistance(key.toUpperCase(), candidate);
+        if (!best || d < best.distance) best = { candidate, distance: d };
+      }
+      return best && best.distance <= 2 ? { key, didYouMean: best.candidate } : { key };
+    });
+}
+
 /**
  * Effective settings = environment variables (highest priority) over values
  * saved through the UI.
@@ -33,10 +106,13 @@ function resolveSettings() {
   const pick = (envKey, savedKey, fallback = '') =>
     envOr(envKey, '') || (saved[savedKey] ?? fallback);
 
-  const environment =
-    String(pick('MPESA_ENV', 'environment', 'sandbox')).toLowerCase() === 'production'
-      ? 'production'
-      : 'sandbox';
+  /* Only `sandbox` and `production` are meaningful. A value like `prod` used to
+     fall back to sandbox silently - prompting test phones while the operator
+     believed real money was moving - so the input is reported, not just coerced. */
+  const environmentInput = String(pick('MPESA_ENV', 'environment', 'sandbox')).trim();
+  const environmentKey = environmentInput.toLowerCase();
+  const environmentRecognized = environmentKey === 'sandbox' || environmentKey === 'production';
+  const environment = environmentKey === 'production' ? 'production' : 'sandbox';
 
   /* Callbacks are public URLs, so a secret in the path is the only thing that
      distinguishes a real Safaricom POST from anyone else who can reach the host.
@@ -49,6 +125,9 @@ function resolveSettings() {
 
   const settings = {
     environment,
+    environmentInput,
+    environmentRecognized,
+    unrecognizedEnv: unrecognisedEnv(),
     callbackSecret,
     consumerKey: String(pick('MPESA_CONSUMER_KEY', 'consumerKey')),
     consumerSecret: String(pick('MPESA_CONSUMER_SECRET', 'consumerSecret')),
@@ -469,4 +548,5 @@ module.exports = {
   mapStatus,
   verifyCallbacksEnabled,
   maskCallbackUrl,
+  REQUIRED_ENV,
 };

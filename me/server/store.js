@@ -5,14 +5,22 @@
  * can never leave a truncated database behind.
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 /* Kept OUTSIDE server/ on purpose: `node --watch --watch-path=server` would
    otherwise restart the process every time a payment is saved, and the restart
    races the old listener for the port (EADDRINUSE). */
+/* Vercel (and Lambda) give a read-only checkout plus a private /tmp. Writing
+   next to the source throws there, so serverless runs keep the file in /tmp
+   instead. That keeps the app up, but /tmp is per-instance: two invocations can
+   see different data, so it is not a substitute for a real database. */
+const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
-  : path.join(__dirname, '..', 'data');
+  : SERVERLESS
+    ? path.join(os.tmpdir(), 'jimmy-pro')
+    : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const EMPTY = () => ({
