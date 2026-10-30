@@ -7,7 +7,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, 'data');
+/* Kept OUTSIDE server/ on purpose: `node --watch --watch-path=server` would
+   otherwise restart the process every time a payment is saved, and the restart
+   races the old listener for the port (EADDRINUSE). */
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 const EMPTY = () => ({
@@ -53,7 +58,13 @@ function load() {
 function flush() {
   const payload = JSON.stringify(db, null, 2);
   const tmp = `${DB_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, payload, 'utf8');
+  /* 0600: the file can hold Daraja credentials and customer PII. */
+  fs.writeFileSync(tmp, payload, { encoding: 'utf8', mode: 0o600 });
+  try {
+    fs.chmodSync(tmp, 0o600);
+  } catch (_) {
+    /* best effort on platforms without POSIX modes */
+  }
   fs.renameSync(tmp, DB_FILE);
 }
 
@@ -72,6 +83,9 @@ function save() {
 module.exports = {
   get data() {
     return db;
+  },
+  get filePath() {
+    return DB_FILE;
   },
   get payments() {
     return db.payments;

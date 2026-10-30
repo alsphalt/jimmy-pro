@@ -1,12 +1,12 @@
 {
   "name": "jimmy-pro",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Jimmy Pro - M-Pesa (Safaricom Daraja) payment requests, STK Push and installable PWA",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch-path=server --watch-path=public server/index.js"
   },
   "engines": {
     "node": ">=18"

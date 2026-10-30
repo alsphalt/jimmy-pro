@@ -176,11 +176,22 @@ app.get('/api/health', (req, res) => {
 /* ------------------------------------------------------------------ settings */
 
 app.get('/api/settings', (req, res) => {
+  const s = mpesa.resolveSettings();
   res.json({
     ...mpesa.publicSettings(),
     callbackSuggestion: `${baseUrl(req)}/api/mpesa/callback`,
     publicUrl: baseUrl(req),
     adminPinRequired: Boolean((process.env.ADMIN_PIN || '').trim()),
+    settlement: {
+      /* Where the money actually lands, and where the owner sits. */
+      receiver: s.shortcode,
+      receiverType: s.transactionType === 'CustomerBuyGoodsOnline' ? 'Buy Goods till' : 'Paybill',
+      ownerMsisdn: s.ownerMsisdn,
+      canSettleToOwnerMsisdn: false,
+      note:
+        'STK Push settles to the shortcode. A personal number can only receive funds ' +
+        'through a B2C payout (separate Daraja product + approval).',
+    },
   });
 });
 
@@ -277,6 +288,18 @@ app.post('/api/settings/reset', requireAdmin, (req, res) => {
 app.post('/api/payments', async (req, res) => {
   if (!ensureLive(res)) return;
   const b = req.body || {};
+
+  /* Daraja settles an STK push to a shortcode/till, never to a personal handset.
+     Refuse the request loudly instead of quietly ignoring the field. */
+  const phoneTarget = b.settleToMsisdn || b.receiverMsisdn || b.payToMsisdn;
+  if (phoneTarget && mpesa.normalizePhone(phoneTarget)) {
+    return res.status(400).json({
+      error:
+        'Your M-Pesa number cannot be the receiver of an STK push. Money settles to the shortcode ' +
+        `(${mpesa.resolveSettings().shortcode}). To land funds on a personal number you need a B2C ` +
+        'payout after collection, or a Buy Goods till registered to that number.',
+    });
+  }
 
   const requestedMode = b.mode === 'link' ? 'link' : 'prompt';
 
@@ -970,7 +993,7 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Unexpected server error.' });
 });
 
-const server = app.listen(PORT, () => {
+function printBanner() {
   const s = mpesa.resolveSettings();
   console.log('');
   console.log('  Jimmy Pro');
@@ -980,8 +1003,36 @@ const server = app.listen(PORT, () => {
   if (!s.live) console.log(`  Missing:  ${s.missing.join(', ')}`);
   console.log(`  Env:      ${s.environment}`);
   console.log(`  Callback: ${s.callbackUrl || '(not set)'}`);
+  console.log(`  Data:     ${store.filePath || '(default)'}`);
+  if (s.ownerMsisdn) console.log(`  Owner:    ${s.ownerMsisdn}`);
   console.log('  ---------------------------------------------');
   console.log('');
+}
+
+/* `node --watch` restarts by spawning a new process before the old listener is
+   fully closed, which surfaces as EADDRINUSE on :3000. Retry briefly instead of
+   crashing with a stack trace, and only give up if the port is genuinely taken. */
+let listenTries = 0;
+const server = app.listen(PORT, printBanner);
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE' && listenTries < 12) {
+    listenTries += 1;
+    if (listenTries === 1) {
+      console.log(`  Port ${PORT} is still held by the previous process - retrying...`);
+    }
+    setTimeout(() => server.listen(PORT), 250);
+    return;
+  }
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+      `\n  Port ${PORT} is already in use by another process.\n` +
+        `  Stop it (lsof -i :${PORT} , then kill <pid>) or start on another port:\n` +
+        `    PORT=3001 npm start\n`
+    );
+    process.exit(1);
+  }
+  throw err;
 });
 
 function shutdown() {

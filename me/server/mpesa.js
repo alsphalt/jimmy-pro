@@ -71,6 +71,11 @@ function resolveSettings() {
       pick('MPESA_KYC_SHORTCODE', 'kycShortcode', '') ||
         pick('MPESA_SHORTCODE', 'shortcode', environment === 'sandbox' ? '174379' : '')
     ),
+
+    /* The operator's own handset. Used for the "owner" label and as the default
+       destination for payouts; it can NOT be the receiver of an STK push -
+       Daraja settles STK to the shortcode, never to a personal number. */
+    ownerMsisdn: normalizePhone(pick('MPESA_OWNER_MSISDN', 'ownerMsisdn')) || '',
   };
 
   settings.missing = [];
@@ -112,7 +117,11 @@ function publicSettings() {
     hasConsumerSecret: Boolean(s.consumerSecret),
     hasPasskey: Boolean(s.passkey),
     envLockedFields: envLockedFields(),
-    sandboxPasskeyHint: SANDBOX_PASSKEY,
+    ownerMsisdn: s.ownerMsisdn,
+    /* Only ever expose the well-known *public sandbox* passkey, and only before
+       a real passkey exists. Production passkeys are never returned. */
+    sandboxPasskeyHint:
+      s.environment !== 'production' && !s.passkey ? SANDBOX_PASSKEY : null,
   };
 }
 

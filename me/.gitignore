@@ -9,3 +9,6 @@ npm-debug.log*
 certs/*.cer
 certs/*.pem
 certs/*.crt
+
+# runtime database (may contain secrets + PII)
+data/

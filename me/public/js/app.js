@@ -572,8 +572,9 @@
     if (s.adminPinRequired && !adminPin()) $('#adminPinField').hidden = false;
 
     $('#callbackDisplay').value = s.callbackSuggestion || '';
-    $('#sandboxKey').textContent = `${String(s.sandboxPasskeyHint).slice(0, 8)}…${String(s.sandboxPasskeyHint).slice(-5)}`;
-    $('#versionLine').textContent = 'Jimmy Pro v1.1.0 · ' + (s.live ? 'live' : 'not configured');
+    const hint = s.sandboxPasskeyHint;
+    $('#sandboxKey').textContent = hint ? `${hint.slice(0, 8)}…${hint.slice(-5)}` : 'using your own key';
+    $('#versionLine').textContent = 'Jimmy Pro v1.1.1 · ' + (s.live ? 'live' : 'not configured');
   }
 
   function settingsPayload() {
