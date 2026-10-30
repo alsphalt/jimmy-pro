@@ -6,6 +6,10 @@ An installable (PWA) M-Pesa payment app: send a real Lipa na M-Pesa **STK prompt
 - **Frontend:** single-page app, no build step, every control wired to a real endpoint.
 - **PWA:** manifest, service worker, offline shell, install prompt, home-screen shortcuts.
 
+There is **no demo or simulation mode**. Every prompt, pay link, B2B payment and
+KYC check is a real Daraja call; if credentials are missing the app refuses the
+request instead of faking a settlement.
+
 ---
 
 ## Quick start
@@ -17,9 +21,10 @@ npm start
 # open http://localhost:3000
 ```
 
-It starts in **demo mode**: every screen and every button works, prompts resolve in ~7 seconds, and **no money moves and no Safaricom call is made**. Use this to trial the flow end to end.
-
-To go live, add Daraja credentials (next section). No code changes needed.
+It starts **unconfigured**: the UI loads and the settings screen works, but every
+endpoint that would move money answers `503` and lists the missing fields. There
+is no simulation path — add Daraja credentials (next section) and the same
+endpoints start sending real prompts. No code changes needed.
 
 ---
 
@@ -69,9 +74,12 @@ Put that URL into **Settings → Callback URL** (the app shows the correct path)
 
 There are two ways, and both work today:
 
-**A. Prompt a phone directly** — *New → Send to phone*. Enter their Safaricom number and amount. In live mode their phone rings with the M-Pesa PIN prompt immediately; in demo mode the request resolves on its own so you can see the whole lifecycle.
+**A. Prompt a phone directly** — *New → Send to phone*. Enter their Safaricom number and amount. Their phone rings with the M-Pesa PIN prompt immediately and the request settles the moment they approve.
 
-**B. Share a link (works even before you have credentials)** — *New → Share a link*, set an amount, then **Copy** / **Share**. The other person opens `https://your-host/pay/JP-XXXXXX`, types their own number, and gets the prompt on their phone. The owner's dashboard updates live via SSE.
+**B. Share a link** — *New → Share a link*, set an amount, then **Copy** / **Share**. The other person opens `https://your-host/pay/JP-XXXXXX`, types their own number, and gets the prompt on their phone. The owner's dashboard updates live via SSE.
+
+Both paths require credentials: a pay link is a request for money, so the app
+will not create one while M-Pesa is unconfigured.
 
 To let someone else trial the web app itself, expose port 3000 with ngrok and send them the https URL — the PWA is installable from there too.
 
@@ -167,12 +175,12 @@ The response is normalised because Safaricom does not publish a fixed schema for
 this endpoint — whatever comes back is kept in `raw` and shown in the UI under
 "Raw response".
 
-### Trying them without credentials
+### Credentials are required
 
-Both screens work in demo mode: B2B returns a simulated `ConversationID` and
-settles after ~4 seconds, KYC returns a simulated `valid` result labelled as
-demo. Nothing is sent to Safaricom, so you can rehearse the flow first. The
-moment credentials are saved they switch to real calls with no code change.
+B2B and KYC call Safaricom directly — there is no simulated path. Without
+credentials both endpoints answer `503` with the list of missing fields, and the
+UI shows the same message. KYC is billed per check, so the form stays a
+deliberate single-shot action.
 
 ## API
 
@@ -182,13 +190,12 @@ moment credentials are saved they switch to real calls with no code change.
 | `GET` | `/api/settings` | Sanitised config (secrets never returned) |
 | `PUT` | `/api/settings` | Save config (`x-admin-pin` if `ADMIN_PIN` set) |
 | `POST` | `/api/settings/test` | Live OAuth token check |
-| `POST` | `/api/settings/reset` | Back to demo |
+| `POST` | `/api/settings/reset` | Clear every saved setting |
 | `POST` | `/api/payments` | Create prompt `{phone, amount, accountReference, description}` or link `{mode:"link", amount}` |
 | `GET` | `/api/payments?status=&q=` | List / search |
 | `GET` | `/api/payments/:id` | One payment |
 | `POST` | `/api/payments/:id/query` | STK status query |
 | `POST` | `/api/payments/:id/retry` | Prompt again (new record) |
-| `POST` | `/api/payments/:id/outcome` | Demo-only manual resolution |
 | `DELETE` | `/api/payments/:id` | Delete record |
 | `GET` | `/api/stats` | Totals, success rate, 7-day series |
 | `GET` | `/api/events` | SSE: `payment`, `payment_deleted` |
@@ -215,7 +222,7 @@ moment credentials are saved they switch to real calls with no code change.
 ```
 jimmy-pro/
 ├── server/
-│   ├── index.js      routes, SSE, demo simulation, callbacks
+│   ├── index.js      routes, SSE, callbacks
 │   ├── mpesa.js      OAuth, STK push, STK query, callback parsing
 │   ├── b2b.js        B2B payment request + async result parsing
 │   ├── kyc.js        KYC / validateID with normalised responses

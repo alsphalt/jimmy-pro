@@ -2,8 +2,27 @@
 (function () {
   'use strict';
 
-  const $ = (sel, root) => (root || document).querySelector(sel);
-  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+  /* Selector-safe lookups: a "#/"-style hash is not a valid CSS selector, and
+     any host script that reflects the URL into querySelector() would throw a
+     SyntaxError on it. Plain "#id" selectors go through getElementById and
+     everything else is guarded, so a bad selector can never crash the app. */
+  const $ = (sel, root) => {
+    if (typeof sel !== 'string' || !sel) return null;
+    if (/^#[A-Za-z][\w-]*$/.test(sel)) return document.getElementById(sel.slice(1));
+    try {
+      return (root || document).querySelector(sel);
+    } catch (_) {
+      return null;
+    }
+  };
+  const $$ = (sel, root) => {
+    if (typeof sel !== 'string' || !sel) return [];
+    try {
+      return Array.from((root || document).querySelectorAll(sel));
+    } catch (_) {
+      return [];
+    }
+  };
 
   const state = {
     settings: null,
@@ -158,13 +177,17 @@
 
   const VIEWS = ['home', 'new', 'history', 'business', 'settings'];
 
+  /* Routes are plain "#home" style fragments, never "#/home": "#/x" is not a
+     valid CSS selector and host runtimes that mirror the hash into
+     querySelector() throw "…'#/home' is not a valid selector". */
   function setView(name) {
     if (!VIEWS.includes(name)) name = 'home';
     VIEWS.forEach((v) => {
-      $(`#view-${v}`).hidden = v !== name;
+      const el = document.getElementById(`view-${v}`);
+      if (el) el.hidden = v !== name;
     });
     $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.goto === name));
-    if (location.hash !== `#/${name}`) history.replaceState(null, '', `#/${name}`);
+    if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
     window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
     if (name === 'history') loadPayments();
     if (name === 'business') {
@@ -178,8 +201,10 @@
   }
 
   function currentView() {
-    const m = location.hash.match(/^#\/(\w+)/);
-    return m ? m[1] : 'home';
+    /* Accepts "#new", "#/new" (old links) and "" without ever building a
+       selector out of the raw hash. */
+    const raw = String(location.hash || '').replace(/^#\/?/, '').toLowerCase();
+    return VIEWS.includes(raw) ? raw : 'home';
   }
 
   /* -------------------------------------------------------------- data load */
@@ -230,27 +255,25 @@
     const s = state.settings;
     if (!s) return;
     const pill = $('#modePill');
-    pill.textContent = s.live ? 'LIVE' : 'DEMO';
-    pill.className = `mode-pill ${s.live ? 'live' : 'demo'}`;
+    pill.textContent = s.live ? 'LIVE' : 'SETUP';
+    pill.className = `mode-pill ${s.live ? 'live' : 'setup'}`;
     pill.title = s.live
       ? 'Connected to Safaricom - real prompts are sent'
-      : 'Demo mode - nothing is charged';
+      : 'Not configured - add your Daraja credentials';
 
     $('#brandSub').textContent =
       s.businessName && s.businessName !== 'Jimmy Pro' ? s.businessName : 'M-Pesa payments';
-    $$('.demo-only').forEach((el) => { el.hidden = Boolean(s.live); });
 
-    $('#modeTitle').textContent = s.live ? 'Live mode' : 'Demo mode';
+    const missing = Array.isArray(s.missing) && s.missing.length ? s.missing.join(', ') : 'credentials';
+    $('#modeTitle').textContent = s.live ? 'Live mode' : 'Not configured';
     $('#modeText').textContent = s.live
       ? `Connected to Safaricom ${s.environment}. Prompts are sent to real phones and money moves.`
-      : s.hasCredentials
-        ? 'Credentials saved, but demo mode is forced in settings.'
-        : 'No real money moves. Every flow works end to end so you can trial it.';
+      : `Nothing can be charged until M-Pesa is configured. Missing: ${missing}.`;
     $('#modeDot').className = `dot-live ${s.live ? 'live' : ''}`;
 
     $('#promptFineprint').textContent = s.live
       ? `The payer receives an M-Pesa prompt from shortcode ${s.shortcode}. Money is settled instantly.`
-      : 'Demo mode: the request is simulated locally and resolves in a few seconds.';
+      : 'M-Pesa is not configured. Add your Daraja credentials in Settings to send prompts.';
 
     $('#greeting').textContent = greetingText();
   }
@@ -411,7 +434,6 @@
       ['Receipt', p.mpesaReceipt || '—'],
       ['M-Pesa code', p.resultCode || '—'],
       ['Message', p.resultDesc || '—'],
-      ['Mode', p.mode === 'live' ? 'Live' : 'Demo'],
     ];
 
     $('#sheetDetails').innerHTML = rows
@@ -419,7 +441,6 @@
       .join('');
 
     $('#sheetReceiptBtn').hidden = !p.mpesaReceipt;
-    $('#sheetDemo').hidden = !(p.mode === 'demo' && p.status === 'pending');
     $('#sheetQueryBtn').hidden = p.status !== 'pending';
 
     $('#sheetBackdrop').hidden = false;
@@ -474,7 +495,6 @@
     $('#resultRef').textContent = p.ref;
     $('#resultPhone').textContent = p.payerPhonePretty || p.phonePretty || '—';
     $('#resultReceipt').textContent = p.mpesaReceipt || '—';
-    $('#resultDemo').hidden = !(p.mode === 'demo' && p.status === 'pending');
     $('#checkStatusBtn').disabled = p.status !== 'pending';
   }
 
@@ -531,7 +551,6 @@
       ? 'Saved — leave blank to keep'
       : 'Paste consumer secret';
     $('#setPasskey').placeholder = s.hasPasskey ? 'Saved — leave blank to keep' : 'Paste passkey';
-    $('#setDemoMode').checked = s.demoForced === true;
 
     /* B2B + KYC settings */
     $('#setInitiator').value = s.initiatorName || '';
@@ -545,8 +564,6 @@
         ? `Security credential ready — certificate valid until ${cert.validTo}.`
         : 'Security credential supplied through the environment.'
       : 'Security credential not set. Add MPESA_INITIATOR_PASSWORD plus certs/safaricom.cer (or MPESA_SECURITY_CREDENTIAL) before using live B2B.';
-    $('#setDemoMode').disabled = Boolean(s.envLockedFields && s.envLockedFields.demoMode);
-
     $$('#envToggle .seg').forEach((b) =>
       b.classList.toggle('is-active', b.dataset.env === s.environment)
     );
@@ -556,7 +573,7 @@
 
     $('#callbackDisplay').value = s.callbackSuggestion || '';
     $('#sandboxKey').textContent = `${String(s.sandboxPasskeyHint).slice(0, 8)}…${String(s.sandboxPasskeyHint).slice(-5)}`;
-    $('#versionLine').textContent = 'Jimmy Pro v1.0.0 · ' + (s.live ? 'live' : 'demo') + ' mode';
+    $('#versionLine').textContent = 'Jimmy Pro v1.1.0 · ' + (s.live ? 'live' : 'not configured');
   }
 
   function settingsPayload() {
@@ -571,7 +588,6 @@
       passkey: $('#setPasskey').value.trim(),
       callbackUrl: $('#setCallback').value.trim(),
       businessName: $('#setBusinessName').value.trim(),
-      demoMode: $('#setDemoMode').checked,
       initiatorName: $('#setInitiator').value.trim(),
       senderShortcode: $('#setSenderShortcode').value.trim(),
       resultUrl: $('#setResultUrl').value.trim(),
@@ -605,9 +621,6 @@
         accountReference: $('#reference').value.trim() || $('#description').value.trim() || 'Jimmy Pro',
         description: $('#description').value.trim() || 'Payment request',
       };
-      if (state.settings && !state.settings.live) {
-        body.simulateOutcome = $('#simulateOutcome').value;
-      }
       const { payment } = await api('/api/payments', { method: 'POST', body });
       toast(`Prompt sent to ${payment.phonePretty || payment.phone}`, 'success');
       showResult(payment);
@@ -714,20 +727,6 @@
     }
   }
 
-  async function resolveDemo(payment, outcome) {
-    try {
-      const { payment: updated } = await api(`/api/payments/${payment.id}/outcome`, {
-        method: 'POST',
-        body: { outcome },
-      });
-      toast(`Marked ${STATUS_LABEL[updated.status].toLowerCase()}`, 'success');
-      if (!$('#resultCard').hidden) updateResultCard(updated);
-      if (!$('#sheetBackdrop').hidden) openSheet(updated);
-      scheduleRefresh();
-    } catch (err) {
-      toast(err.message, 'error');
-    }
-  }
 
   /* ------------------------------------------------------------ business API */
 
@@ -772,14 +771,10 @@ function applyEndpointDefaults() {
   if (!d) return;
   if (!$('#b2bPartyA').value && d.partyA) $('#b2bPartyA').placeholder = d.partyA;
   if (d.commandId) $('#b2bCommand').value = d.commandId;
-  const s = state.settings || {};
-  const demo = s.live === false;
-  $('#b2bFineprint').textContent = demo
-    ? 'Demo mode: the request is simulated and settles in a few seconds. Nothing leaves the server.'
-    : 'Live: money moves from your shortcode to the receiver. Safaricom posts the final result to your B2B result URL.';
-  $('#kycFineprint').textContent = demo
-    ? 'Demo mode: returns a simulated "valid" result without calling Safaricom.'
-    : 'Live: the ID and MSISDN are checked against Safaricom records. Each check is billed.';
+  $('#b2bFineprint').textContent =
+    'Money moves from your shortcode to the receiver. Safaricom posts the final result to your B2B result URL.';
+  $('#kycFineprint').textContent =
+    'The ID and MSISDN are checked against Safaricom records. Each check is billed.';
 }
 
 async function loadBusiness() {
@@ -857,7 +852,7 @@ function renderKycList() {
         <span class="row-sub">${esc(c.msisdn)} · ${esc(c.ref)}</span>
       </span>
       <span class="row-right">
-        <span class="row-amount">${esc(c.mode === 'demo' ? 'demo' : 'live')}</span>
+        <span class="row-amount">${esc(c.mode || 'live')}</span>
         <span class="row-time">${esc(timeAgo(c.createdAt))}</span>
       </span>
     </button>`
@@ -1168,11 +1163,6 @@ async function submitKyc(event) {
         shareLink(state.activePayment.payUrl, 'Pay ' + kes(state.activePayment.amount), state.activePayment.description);
       }
     });
-    $$('#resultDemo [data-outcome]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (state.activePayment) resolveDemo(state.activePayment, btn.dataset.outcome);
-      });
-    });
     $('#newAnotherBtn').addEventListener('click', () => {
       stopPolling();
       $('#resultCard').hidden = true;
@@ -1253,12 +1243,6 @@ async function submitKyc(event) {
     $('#sheetDeleteBtn').addEventListener('click', () => {
       if (state.activePayment) deletePayment(state.activePayment.id);
     });
-    $$('#sheetDemo [data-outcome]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (state.activePayment) resolveDemo(state.activePayment, btn.dataset.outcome);
-      });
-    });
-
     /* settings */
     $$('#envToggle .seg').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1328,7 +1312,7 @@ async function submitKyc(event) {
     });
 
     $('#resetSettingsBtn').addEventListener('click', async () => {
-      if (!confirm('Reset M-Pesa settings back to demo mode?')) return;
+      if (!confirm('Clear all saved M-Pesa credentials?')) return;
       try {
         const { settings } = await api('/api/settings/reset', { method: 'POST' });
         state.settings = Object.assign({}, state.settings, settings);
@@ -1402,12 +1386,11 @@ async function submitKyc(event) {
     wire();
     initInstall();
     setView(currentView());
-    $$('.demo-only').forEach((el) => { el.hidden = false; });
 
     try {
       await Promise.all([loadSettings(), loadStats(), loadPayments(), loadEndpoints()]);
       if (currentView() === 'business') loadBusiness();
-      /* Deep links (#/settings) paint before the config arrives - repaint once it does. */
+      /* Deep links (#settings) paint before the config arrives - repaint once it does. */
       if (currentView() === 'settings') renderSettings();
       applyEndpointDefaults();
     } catch (err) {

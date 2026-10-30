@@ -118,7 +118,7 @@ p { margin: 0; }
   border-color: rgba(34, 197, 94, 0.45);
   background: rgba(34, 197, 94, 0.12);
 }
-.mode-pill.demo {
+.mode-pill.setup {
   color: #ffe0a3;
   border-color: rgba(245, 185, 66, 0.4);
   background: rgba(245, 185, 66, 0.1);

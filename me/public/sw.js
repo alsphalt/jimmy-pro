@@ -1,5 +1,5 @@
 /* Jimmy Pro service worker — app shell caching + offline fallback */
-const VERSION = 'jimmy-pro-v2';
+const VERSION = 'jimmy-pro-v3';
 const SHELL = [
   '/',
   '/index.html',

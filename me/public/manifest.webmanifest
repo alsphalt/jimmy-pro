@@ -37,13 +37,13 @@
     {
       "name": "New payment",
       "short_name": "New",
-      "url": "/#/new",
+      "url": "/#new",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
     },
     {
       "name": "History",
       "short_name": "History",
-      "url": "/#/history",
+      "url": "/#history",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
     }
   ]
