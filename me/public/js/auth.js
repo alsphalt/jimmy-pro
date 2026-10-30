@@ -271,6 +271,8 @@
     show('gateVerify');
     try {
       const res = await api('/api/auth/verification/start', { method: 'POST' });
+      const kycForm = $('#kycForm');
+      if (kycForm) kycForm.hidden = !res.kyc;
       if (res.sevenDigitCodeSupported) {
         box.textContent = 'A verification code was sent. Enter it to continue.';
       } else {
@@ -284,6 +286,32 @@
       }
     } catch (err) {
       box.textContent = err.message;
+    }
+  }
+
+  /** The one real ownership check Daraja offers for personal accounts. */
+  async function runKyc(event) {
+    event.preventDefault();
+    const btn = $('#kycBtn');
+    if (btn.disabled) return;
+    setBusy(btn, true);
+    try {
+      const res = await api('/api/auth/verification/kyc', {
+        method: 'POST',
+        body: { idType: $('#kycType').value.trim(), idNumber: $('#kycNumber').value.trim() },
+      });
+      const box = $('#verifyBody');
+      box.innerHTML =
+        '<p class="gate-ok">Verified with Safaricom.</p>' +
+        `<p class="muted">Checked ${esc(new Date(res.verification.checkedAt).toLocaleString())}.</p>`;
+      $('#kycForm').hidden = true;
+      fail('');
+      $('#gateError').hidden = true;
+    } catch (err) {
+      /* Show exactly what the provider said; do not soften a failure. */
+      fail(err.message);
+    } finally {
+      setBusy(btn, false);
     }
   }
 
@@ -334,6 +362,7 @@
     $('#gateProfile').addEventListener('submit', saveProfile);
     $('#gateAccount').addEventListener('submit', saveAccount);
     $('#verifyContinue').addEventListener('click', () => show('gatePin'));
+    $('#kycForm').addEventListener('submit', runKyc);
     $('#gatePin').addEventListener('submit', savePin);
     $('#codesDone').addEventListener('click', () => location.reload());
   }

@@ -396,6 +396,56 @@ app.post('/api/auth/login', (req, res) => {
   res.json(authPayload(req, user));
 });
 
+/* KYC validateID: the only ownership check Safaricom actually offers for a
+   personal-business account. It is billed per call, so the caller must opt in
+   explicitly - nothing here runs on its own. */
+app.post('/api/auth/verification/kyc', async (req, res) => {
+  const user = req.auth?.user;
+  if (!user) return noSession(res);
+  if (!user.account) return res.status(400).json({ error: 'Choose an account type first.' });
+  const meta = auth.ACCOUNT_TYPES[user.account.type];
+  if (!meta?.kyc) {
+    return res.status(400).json({
+      error: `${meta?.label || 'This account'} cannot be verified with KYC validateID. Use the shortcode ownership check instead.`,
+    });
+  }
+  const { idType, idNumber } = req.body || {};
+  if (!idType || !idNumber) {
+    return res.status(400).json({ error: 'Provide the ID type (e.g. 01 for National ID) and the ID number.' });
+  }
+  try {
+    const result = await kyc.validateId({
+      msisdn: user.phone,
+      idType,
+      idNumber,
+      shortCode: user.account.number,
+    });
+    if (!result.success) {
+      /* Report exactly what Safaricom said; never upgrade a failed check. */
+      user.account.verification = {
+        status: 'failed',
+        method: 'kyc',
+        reason: result.description,
+        code: result.code,
+        checkedAt: new Date().toISOString(),
+      };
+      store.save();
+      return res.status(422).json({ error: `Safaricom rejected the check: ${result.description}`, verification: user.account.verification });
+    }
+    user.account.verification = {
+      status: 'verified',
+      method: 'kyc',
+      reference: result.request?.requestRefID || null,
+      checkedAt: new Date().toISOString(),
+    };
+    store.save();
+    broadcast('auth', { userId: user.id, verification: user.account.verification });
+    res.json({ ok: true, verification: user.account.verification, billed: true });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.message });
+  }
+});
+
 app.get('/api/auth/channel', (req, res) => {
   const user = req.auth?.user;
   if (!user) return noSession(res);
@@ -450,6 +500,7 @@ app.post('/api/auth/verification/start', (req, res) => {
   res.status(200).json({
     sent: false,
     sevenDigitCodeSupported: Boolean(meta.sevenDigitCode),
+    kyc: Boolean(meta.kyc),
     reason: user.account.verification.reason,
     nextSteps: meta.kyc
       ? ['KYC validateID (Safaricom) - checks the ID belongs to the MSISDN holder']

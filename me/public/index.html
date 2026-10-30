@@ -92,6 +92,14 @@
     <!-- step 3: verification (honest about what the provider supports) -->
     <div id="gateVerify" hidden>
       <div class="gate-verify" id="verifyBody"></div>
+      <form id="kycForm" hidden class="gate-verify">
+        <p class="gate-note">Safaricom checks that this ID belongs to the number on your account. Each check is billed.</p>
+        <label class="field"><span>ID type</span><input id="kycType" value="01" maxlength="2" required /></label>
+        <label class="field"><span>ID number</span><input id="kycNumber" inputmode="numeric" maxlength="12" required /></label>
+        <button class="btn btn-outline btn-block" id="kycBtn" type="submit">
+          <span class="btn-label">Verify with Safaricom</span><span class="spinner" hidden></span>
+        </button>
+      </form>
       <button class="btn btn-primary btn-block" id="verifyContinue" type="button">
         <span class="btn-label">Continue</span>
       </button>

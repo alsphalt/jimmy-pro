@@ -271,6 +271,12 @@ p { margin: 0; }
 }
 .btn-primary:hover { filter: brightness(1.06); }
 
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--green);
+  color: var(--green-bright);
+}
+.btn-outline:hover { background: rgba(34, 197, 94, 0.1); }
 .btn-ghost {
   background: var(--card);
   border-color: var(--line-strong);
@@ -1069,3 +1075,5 @@ body.gate-open { overflow: hidden; }
   margin-top: 4px;
   display: block;
 }
+
+.gate-ok { color: var(--green-bright); font-weight: 600; margin: 0; }
