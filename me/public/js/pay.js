@@ -4,12 +4,30 @@
 
   const $ = (sel) => document.querySelector(sel);
   const ref = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
-  const state = { payment: null, timer: null, attempts: 0 };
+  const state = { payment: null, timer: null, attempts: 0, msisdn: null };
 
   const kes = (n) => 'KES ' + Number(n || 0).toLocaleString('en-KE', { maximumFractionDigits: 0 });
 
+  /* Same rules as the server: 254 + 9 digits, 07xx or 01xx series. */
+  function normalizePhone(input) {
+    let digits = String(input).replace(/\D/g, '');
+    if (digits.startsWith('254')) {
+      /* already international */
+    } else if (digits.startsWith('0') && digits.length === 10) {
+      digits = '254' + digits.slice(1);
+    } else if (digits.length === 9) {
+      digits = '254' + digits;
+    }
+    return /^254[17]\d{8}$/.test(digits) ? digits : null;
+  }
+
+  function prettyPhone(msisdn) {
+    const local = '0' + msisdn.slice(3);
+    return local.slice(0, 4) + ' ' + local.slice(4, 7) + ' ' + local.slice(7);
+  }
+
   function show(id) {
-    ['payRequest', 'payWaiting', 'payDone', 'payClosed'].forEach((key) => {
+    ['payRequest', 'payConfirm', 'payWaiting', 'payDone', 'payClosed'].forEach((key) => {
       const el = document.getElementById(key);
       if (el) el.hidden = key !== id;
     });
@@ -101,13 +119,33 @@
     }, 3000);
   }
 
-  async function pay(event) {
-    event.preventDefault();
+  /* Step 1: validate locally and show what is about to happen. No request is
+     made here, so a mistyped number costs nothing and nobody gets prompted by
+     accident. */
+  function review(event) {
+    if (event) event.preventDefault();
     error('');
-    const phone = $('#pPhone').value.trim();
-    if (!phone) return error('Enter your M-Pesa number.');
 
-    const btn = $('#payBtn');
+    const msisdn = normalizePhone($('#pPhone').value);
+    if (!msisdn) {
+      return error('Enter a valid Safaricom number, e.g. 0712 345 678.');
+    }
+
+    state.msisdn = msisdn;
+    $('#cAmount').textContent = kes(state.payment?.amount);
+    $('#cBusiness').textContent = state.payment?.businessName || 'Jimmy Pro';
+    $('#cRef').textContent = state.payment?.ref || ref;
+    $('#cPhone').textContent = prettyPhone(msisdn);
+    show('payConfirm');
+  }
+
+  /* Step 2: the payer has confirmed the details, so the prompt can go out. */
+  async function pay() {
+    error('');
+    const phone = state.msisdn;
+    if (!phone) return review();
+
+    const btn = $('#confirmBtn');
     setBusy(btn, true);
     try {
       const res = await fetch(`/api/public/pay/${encodeURIComponent(ref)}/prompt`, {
@@ -126,7 +164,7 @@
       startPolling();
     } catch (err) {
       error(err.message);
-      show('payRequest');
+      show('payConfirm');
     } finally {
       setBusy(btn, false);
     }
@@ -138,7 +176,13 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    $('#payForm').addEventListener('submit', pay);
+    $('#payForm').addEventListener('submit', review);
+    $('#confirmBtn').addEventListener('click', pay);
+    $('#changeBtn').addEventListener('click', () => {
+      show('payRequest');
+      error('');
+      $('#pPhone').focus();
+    });
     $('#payRetryBtn').addEventListener('click', retry);
     $('#payRetryBtn').hidden = false;
     load().catch(() => {

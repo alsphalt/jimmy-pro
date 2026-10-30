@@ -7,6 +7,9 @@ const fs = require('fs');
 const path = require('path');
 
 function loadEnv() {
+  /* Tests drive the app with explicit variables; a developer's real .env must
+     not leak in and quietly change what they assert. */
+  if (process.env.JIMMY_SKIP_DOTENV === '1') return;
   const file = path.join(__dirname, '..', '.env');
   if (!fs.existsSync(file)) return;
   const raw = fs.readFileSync(file, 'utf8');

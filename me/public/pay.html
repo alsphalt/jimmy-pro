@@ -107,7 +107,23 @@
             <span class="spinner" hidden></span>
           </button>
         </form>
-        <p class="pay-note">You will get a PIN prompt on your phone. Enter your M-Pesa PIN to confirm.</p>
+        <p class="pay-note">Next you confirm the details. The prompt is only sent after you confirm.</p>
+      </div>
+
+      <div class="pay-status" id="payConfirm" hidden>
+        <h2>Confirm this payment</h2>
+        <p>Check the details below. Nothing is sent to your phone until you confirm.</p>
+        <div class="receipt">
+          <div><span>Amount</span><strong id="cAmount">—</strong></div>
+          <div><span>Paying</span><strong id="cBusiness">—</strong></div>
+          <div><span>Account</span><strong id="cRef">—</strong></div>
+          <div><span>Prompt to</span><strong id="cPhone">—</strong></div>
+        </div>
+        <button class="btn btn-primary btn-block" id="confirmBtn" type="button">
+          <span class="btn-label">Confirm &amp; send prompt</span>
+          <span class="spinner" hidden></span>
+        </button>
+        <button class="btn btn-ghost btn-block" id="changeBtn" type="button">Change number</button>
       </div>
 
       <div class="pay-status" id="payWaiting" hidden>
