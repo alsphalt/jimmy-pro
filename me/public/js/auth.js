@@ -382,6 +382,12 @@
     $('#verifyContinue').addEventListener('click', () => show('gatePin'));
     $('#kycForm').addEventListener('submit', runKyc);
     $('#gatePin').addEventListener('submit', savePin);
+    /* Setup must not dead-end on the PIN. It stays available in Settings, and the
+       sensitive actions that need it will ask for it there. */
+    $('#pinSkip').addEventListener('click', (e) => {
+      e.preventDefault();
+      resume();
+    });
     $('#codesDone').addEventListener('click', () => location.reload());
   }
 
