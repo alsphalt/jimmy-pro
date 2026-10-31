@@ -7,6 +7,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { selectBackend } = require('./store-backend');
 
 /* Kept OUTSIDE server/ on purpose: `node --watch --watch-path=server` would
    otherwise restart the process every time a payment is saved, and the restart
@@ -23,6 +24,10 @@ const DATA_DIR = process.env.DATA_DIR
     : path.join(__dirname, '..', 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+/* One document, two possible homes: a file, or a single Postgres row when
+   DATABASE_URL is set. See store-backend.js for why serverless needs the latter. */
+const backend = selectBackend({ dir: DATA_DIR });
+
 const EMPTY = () => ({
   settings: {},
   payments: [],
@@ -38,6 +43,52 @@ const EMPTY = () => ({
 
 let db = EMPTY();
 let saveTimer = null;
+let writeChain = Promise.resolve();
+
+/* Accepts a document from any source and keeps only what this build understands,
+   so an older or partially-written file can never crash a request. */
+function adopt(parsed) {
+  const next = parsed && typeof parsed === 'object' ? parsed : {};
+  db = {
+    settings: next.settings && typeof next.settings === 'object' ? next.settings : {},
+    payments: Array.isArray(next.payments) ? next.payments : [],
+    b2b: Array.isArray(next.b2b) ? next.b2b : [],
+    kyc: Array.isArray(next.kyc) ? next.kyc : [],
+    users: Array.isArray(next.users) ? next.users : [],
+    sessions: Array.isArray(next.sessions) ? next.sessions : [],
+    devices: Array.isArray(next.devices) ? next.devices : [],
+    createdAt: next.createdAt || new Date().toISOString(),
+  };
+}
+
+let ready = null;
+
+/** Connect and pull the document once; safe to call from every request. */
+function init() {
+  if (!ready) {
+    ready = (async () => {
+      const doc = await backend.init();
+      if (doc) adopt(doc);
+      return true;
+    })().catch((err) => {
+      ready = null;
+      throw err;
+    });
+  }
+  return ready;
+}
+
+/**
+ * With shared storage another instance may have written since we loaded, so each
+ * request re-reads the row. With a file this is a no-op: this process is the only
+ * writer.
+ */
+async function refresh() {
+  if (backend.kind !== 'postgres') return;
+  await init();
+  const doc = await backend.read();
+  if (doc) adopt(doc);
+}
 
 function load() {
   try {
@@ -47,17 +98,7 @@ function load() {
       flush();
       return;
     }
-    const parsed = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    db = {
-      settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {},
-      payments: Array.isArray(parsed.payments) ? parsed.payments : [],
-      b2b: Array.isArray(parsed.b2b) ? parsed.b2b : [],
-      kyc: Array.isArray(parsed.kyc) ? parsed.kyc : [],
-      users: Array.isArray(parsed.users) ? parsed.users : [],
-      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-      devices: Array.isArray(parsed.devices) ? parsed.devices : [],
-      createdAt: parsed.createdAt || new Date().toISOString(),
-    };
+    adopt(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
   } catch (err) {
     console.error('[store] could not read db.json, starting fresh:', err.message);
     try {
@@ -85,6 +126,15 @@ function flush() {
 }
 
 function save() {
+  if (backend.kind === 'postgres') {
+    /* Write-through: a session created here must be visible to the next request,
+       which may land on another instance. Serialise writes so the last state
+       wins rather than an older one overwriting a newer one. */
+    writeChain = writeChain
+      .then(() => backend.write(db))
+      .catch((err) => console.error('[store] write failed:', err.message));
+    return;
+  }
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -97,11 +147,14 @@ function save() {
 }
 
 module.exports = {
+  init,
+  refresh,
+  backend: backend.kind,
   get data() {
     return db;
   },
   get filePath() {
-    return DB_FILE;
+    return backend.kind === 'postgres' ? null : DB_FILE;
   },
   get payments() {
     return db.payments;

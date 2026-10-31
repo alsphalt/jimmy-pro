@@ -254,6 +254,18 @@ function deploymentInfo() {
 }
 
 
+/* With shared storage every request must see what other instances wrote, so the
+   document is re-read before routing. No-op for a local file. */
+app.use('/api', async (req, res, next) => {
+  try {
+    await store.refresh();
+  } catch (err) {
+    console.error('[store] refresh failed:', err.message);
+    return res.status(503).json({ error: 'Storage is unavailable. Try again in a moment.' });
+  }
+  next();
+});
+
 /* ------------------------------------------------------------------ identity */
 /* Order matters: this gate is registered before every owner route, so a route
    added later is protected by default rather than by remembering to guard it.
@@ -303,6 +315,7 @@ function authPayload(req, user) {
   const session = req.auth?.session || null;
   return {
     user: auth.publicUser(user),
+    nextStep: auth.nextStep(user),
     accountTypes: Object.entries(auth.ACCOUNT_TYPES).map(([id, meta]) => ({
       id,
       label: meta.label,
@@ -343,7 +356,28 @@ app.get('/api/auth/config', (req, res) => {
 
 app.post('/api/auth/register', (req, res) => {
   try {
-    const user = auth.register(req.body || {});
+    const body = req.body || {};
+    const user = auth.register(body);
+    /* The business details arrive with the account, so a new owner reaches the
+       payment step in one submission instead of being pushed through a second
+       screen that looked exactly like the first. Empty fields fall through to the
+       profile step rather than failing the registration. */
+    const wantsProfile = ['name', 'phone'].some((k) => String(body[k] || '').trim()) ||
+      String(body.business?.name || '').trim();
+    if (wantsProfile) {
+      try {
+        auth.updateProfile(user, {
+          name: body.name,
+          phone: body.phone,
+          business: body.business,
+        });
+      } catch (err) {
+        /* Do not leave a half-created account behind: the person would be unable
+           to register again with the same email. */
+        auth.deleteUser(user.id);
+        throw err;
+      }
+    }
     const deviceKey = auth.deviceFromRequest(req) || auth.newId();
     const device = auth.trustDevice(user, deviceKey, req);
     const { token } = auth.createSession(user, device.id, req);
@@ -1631,7 +1665,13 @@ function printBanner() {
    imports this module and calls it per request, and calling listen() there would
    either throw or leave a half-open listener. So the app is exported as-is and
    the listener is opt-in. */
-function startServer() {
+async function startServer() {
+  try {
+    await store.init();
+  } catch (err) {
+    console.error('Could not open the datastore:', err.message);
+    throw err;
+  }
   let listenTries = 0;
   const server = app.listen(PORT, printBanner);
 
@@ -1675,4 +1715,6 @@ module.exports.startServer = startServer;
 
 /* `npm start` still runs this file directly and binds the port; `require()` from
    a serverless entry gets the app without side effects. */
-if (require.main === module) startServer();
+if (require.main === module) {
+  startServer().catch(() => process.exit(1));
+}

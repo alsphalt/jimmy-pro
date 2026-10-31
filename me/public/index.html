@@ -52,8 +52,36 @@
     <!-- register -->
     <form id="gateRegister" autocomplete="on" novalidate hidden>
       <label class="field">
+        <span>Your name</span>
+        <input id="regName" autocomplete="name" placeholder="Jane Wanjiku" />
+      </label>
+      <label class="field">
         <span>Email</span>
         <input id="regEmail" type="email" autocomplete="username" required />
+      </label>
+      <label class="field">
+        <span>M-Pesa phone</span>
+        <input id="regPhone" inputmode="tel" autocomplete="tel" placeholder="0712 345 678" />
+      </label>
+      <label class="field">
+        <span>Business name</span>
+        <input id="regBiz" autocomplete="organization" placeholder="Wanjiku Stores" />
+      </label>
+      <label class="field">
+        <span>Town</span>
+        <input id="regTown" placeholder="Nakuru" />
+      </label>
+      <label class="field">
+        <span>What you sell</span>
+        <select id="regType">
+          <option value="">Choose one</option>
+          <option>Retail shop</option>
+          <option>Food and drink</option>
+          <option>Services</option>
+          <option>Wholesale</option>
+          <option>Farm produce</option>
+          <option>Other</option>
+        </select>
       </label>
       <label class="field">
         <span>Password</span>
@@ -83,6 +111,11 @@
       <p class="gate-sub">Where does your money land?</p>
       <div class="type-list" id="typeList"></div>
       <p class="gate-note" id="typeNote" hidden></p>
+      <label class="field">
+        <span>Name customers see</span>
+        <input id="acctName" maxlength="80" placeholder="Wanjiku Stores" />
+        <small class="hint">Shown on the M-Pesa prompt where your account supports it.</small>
+      </label>
       <label class="field"><span>Account / business number</span><input id="acctNumber" inputmode="numeric" required /></label>
       <button class="btn btn-primary btn-block" id="accountBtn" type="submit">
         <span class="btn-label">Continue</span><span class="spinner" hidden></span>

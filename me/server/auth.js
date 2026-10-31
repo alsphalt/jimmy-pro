@@ -94,6 +94,16 @@ const newToken = () => crypto.randomBytes(32).toString('hex');
 
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
+/** Undo a registration that could not be completed. */
+function deleteUser(userId) {
+  const i = store.users.findIndex((u) => u.id === userId);
+  if (i !== -1) store.users.splice(i, 1);
+  dropSessions((s) => s.userId === userId);
+  const list = store.devices;
+  for (let j = list.length - 1; j >= 0; j -= 1) if (list[j].userId === userId) list.splice(j, 1);
+  store.save();
+}
+
 function findUserByEmail(email) {
   const key = normalizeEmail(email);
   return store.users.find((u) => u.email === key) || null;
@@ -101,6 +111,24 @@ function findUserByEmail(email) {
 
 function findUserById(id) {
   return store.users.find((u) => u.id === id) || null;
+}
+
+/**
+ * The single answer to "where is this account up to". The client renders whatever
+ * this says, so Continue and Sign in can never disagree and bounce a user between
+ * two screens forever.
+ */
+function nextStep(user) {
+  if (!user) return 'login';
+  if (!(user.name && user.phone && user.business && user.business.name)) return 'profile';
+  const meta = ACCOUNT_TYPES[user.account?.type];
+  if (!meta || !user.account?.number) return 'payment';
+  if (!user.account.displayName) return 'name';
+  const status = user.account.verification?.status;
+  /* Only ask where the provider actually offers a check, and never trap someone
+     who declines: "skipped" is a recorded answer, not a silent bypass. */
+  if (meta.kyc && status !== 'verified' && status !== 'skipped') return 'verify';
+  return 'dashboard';
 }
 
 function publicUser(user) {
@@ -201,7 +229,7 @@ function updateProfile(user, { name, phone, business }) {
   return user;
 }
 
-function setAccount(user, { type, number }) {
+function setAccount(user, { type, number, displayName }) {
   const meta = ACCOUNT_TYPES[type];
   if (!meta) {
     const err = new Error('Choose a supported account type.');
@@ -214,9 +242,12 @@ function setAccount(user, { type, number }) {
     err.status = 400;
     throw err;
   }
+  const shown = String(displayName || '').trim().slice(0, 80);
   user.account = {
     type,
     number: clean,
+    /* What customers see on the prompt. */
+    displayName: shown || user.business?.name || user.name || '',
     verification: {
       status: 'unverified',
       method: null,
@@ -533,6 +564,8 @@ function cookieString(name, value, { maxAge } = {}) {
 }
 
 module.exports = {
+  nextStep,
+  deleteUser,
   ACCOUNT_TYPES,
   collectionPlan,
   SESSION_COOKIE,

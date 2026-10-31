@@ -324,3 +324,27 @@ Service worker caches the shell only; every `/api/` call bypasses the cache so b
 | Vercel: variables set, deploy still says *not configured* | Check each variable is enabled for the **Production** scope, then **redeploy** — Vercel bakes env into a deployment, so an existing build keeps the old set |
 | B2B stays *pending* | Safaricom never posted the result — check `MPESA_RESULT_URL` is public |
 | KYC returns `invalid` | The ID and number do not match, or the product is not enabled on your app |
+
+## Storage: file or Postgres
+
+By default the app keeps one JSON document next to the code. That is correct on a
+laptop, a VPS or any host with a real disk.
+
+**It is wrong on serverless.** Each Vercel instance gets its own `/tmp`, so a
+session created by one instance does not exist for the next request and the
+browser is bounced between "Continue" and "Sign in" forever: registration works,
+then the very next call is unauthorised. The same split shows up as payments that
+vanish and callbacks that find nothing.
+
+Set `DATABASE_URL` to fix it. The document then lives in a single Postgres row
+(`jimmy_state`), every instance reads the same state, and each request re-reads the
+row before routing.
+
+```bash
+DATABASE_URL=postgres://user:pass@host/db?sslmode=require
+```
+
+Any Postgres will do - Neon, Supabase, Railway and RDS all have a free tier. The
+app creates its own table on first use, so nothing needs to be run by hand.
+Without `DATABASE_URL` on a serverless host, sessions cannot survive between
+requests; that is a property of the platform, not a bug to patch in the client.

@@ -93,16 +93,20 @@
   }
 
   /** Where in onboarding does this user belong? */
+  /* One function, driven by the server's verdict. Nothing here may send a
+     signed-in user back to Sign in - that is what produced the Continue/Sign in
+     loop. PIN setup no longer blocks the dashboard; it is asked for in Settings
+     when a sensitive action needs it. */
   function resume() {
     const u = state.me?.user;
     if (!u) return show('login');
-    if (!u.profileComplete) {
-      show('gateProfile');
+    const step = state.me?.nextStep || 'dashboard';
+    if (step === 'profile') {
       restoreProfile();
-      return;
+      return show('gateProfile');
     }
-    if (!u.account?.number) return show('gateAccount');
-    if (!u.pinSet) return show('gatePin');
+    if (step === 'payment' || step === 'name') return show('gateAccount');
+    if (step === 'verify') return show('gateVerify');
     return close();
   }
 
@@ -138,7 +142,17 @@
     try {
       state.me = await api('/api/auth/register', {
         method: 'POST',
-        body: { email: $('#regEmail').value, password: $('#regPassword').value },
+        body: {
+          email: $('#regEmail').value,
+          password: $('#regPassword').value,
+          name: $('#regName')?.value || '',
+          phone: $('#regPhone')?.value || '',
+          business: {
+            name: $('#regBiz')?.value || '',
+            town: $('#regTown')?.value || '',
+            category: $('#regType')?.value || '',
+          },
+        },
       });
       resume();
     } catch (err) {
@@ -254,7 +268,11 @@
     try {
       state.me = await api('/api/auth/account', {
         method: 'PUT',
-        body: { type: chosen.dataset.id, number: $('#acctNumber').value },
+        body: {
+          type: chosen.dataset.id,
+          number: $('#acctNumber').value,
+          displayName: $('#acctName')?.value || '',
+        },
       });
       startVerification();
     } catch (err) {
