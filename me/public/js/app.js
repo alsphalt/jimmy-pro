@@ -1422,6 +1422,9 @@ async function submitKyc(event) {
       if (!ok) return;
     }
 
+    $('#appTopbar').hidden = false;
+    $('#app').hidden = false;
+    $('#tabbar').hidden = false;
     wire();
     initInstall();
     setView(currentView());
